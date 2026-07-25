@@ -1,0 +1,41 @@
+# Python 编译缓存
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 测试与覆盖率
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+
+# 虚拟环境
+venv/
+.venv/
+env/
+ENV/
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志与临时文件
+*.log
+*.tmp
+*.bak
+
+# 备份目录（绝不上传）
+Backup/
+backup/
+
+# 环境与密钥（避免误提交）
+.env
+*.pem
+*.key
+secrets.json

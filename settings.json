@@ -1,0 +1,7 @@
+{
+  "llm_mode": "local",
+  "lm_port": 1234,
+  "online_api_base": "http://119.6.186.168:40040",
+  "online_api_key": "",
+  "online_model": "Qwen3-32B-0709"
+}
