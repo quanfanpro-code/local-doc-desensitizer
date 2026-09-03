@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sys
 import threading
 from pathlib import Path
@@ -333,8 +332,10 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         # 根据当前模式显示对应的配置区
         if self.settings.get("llm_mode") == "online":
             self.lm_frame_local.grid_forget()
+            self.lm_frame_online.grid(row=2, column=0, columnspan=3, sticky="ew")
         else:
             self.lm_frame_online.grid_forget()
+            self.lm_frame_local.grid(row=2, column=0, columnspan=3, sticky="ew")
 
         # ---- 脱敏选项 ----
         options_frame = ctk.CTkFrame(self.ctrl_card, fg_color="transparent")
@@ -364,6 +365,14 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         )
         self.checkbox_amount.grid(row=3, column=0, columnspan=2, padx=(0, 0), pady=(0, 0), sticky="w")
         # 默认不勾选金额脱敏
+
+        self.checkbox_abbr_audit = ctk.CTkCheckBox(
+            options_frame, text="简称强力审核", font=ctk.CTkFont(size=12),
+            command=self._简称强力审核切换,
+        )
+        self.checkbox_abbr_audit.grid(row=4, column=0, columnspan=2, padx=(0, 0), pady=(6, 0), sticky="w")
+        if self.settings.get("force_abbr_audit"):
+            self.checkbox_abbr_audit.select()
 
         right_frame = ctk.CTkFrame(self.ctrl_card, fg_color="transparent")
         right_frame.grid(row=0, column=2, padx=(6, 14), pady=12, sticky="ew")
@@ -528,9 +537,34 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         )
         扫描版列表 = processor.检查扫描版pdf(files)
 
-        lm_status = self._探测当前llm状态()
-        没有_lm = not (lm_status["已启动"] and lm_status["模型已加载"])
-        后端名 = "在线 API" if self.settings.get("llm_mode") == "online" else "LM Studio"
+        是在线 = self.settings.get("llm_mode") == "online"
+        try:
+            if 是在线:
+                try:
+                    from .mineru桥接 import 探测在线api状态
+                except ImportError:
+                    from mineru桥接 import 探测在线api状态
+                api_base = self.online_api_base_var.get().strip()
+                api_key = self.online_api_key_var.get().strip()
+                model = self.online_model_var.get().strip()
+                llm_status = 探测在线api状态(api_base, api_key, model)
+            else:
+                llm_status = 探测lm_studio状态()
+        except Exception as e:
+            messagebox.showerror("探测失败", f"LLM 状态探测失败：\n{e}")
+            return
+        没有_lm = not (llm_status.get("已启动") and llm_status.get("模型已加载"))
+        前缀 = "在线 API" if 是在线 else "LM Studio"
+
+        if 扫描版列表:
+            if 没有_lm:
+                messagebox.showwarning(
+                    "扫描版PDF需要LLM",
+                    f"检测到 {len(扫描版列表)} 个扫描版PDF文件，但 {前缀} 未就绪。\n"
+                    f"扫描版PDF必须依赖 LLM 处理，请先确保 {前缀} 已启动并可用。",
+                )
+                return
+            self.append_log(f"检测到 {len(扫描版列表)} 个扫描版PDF，{前缀} 已就绪。")
 
         if 没有_lm:
             has_ner_files = any(
@@ -540,28 +574,14 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
             )
             if has_ner_files:
                 reply = messagebox.askyesno(
-                    f"{后端名} 未就绪",
-                    f"{后端名} 未连接或模型未就绪。\n\n"
+                    f"{前缀} 未就绪",
+                    f"{前缀} 未启动或模型未加载。\n\n"
                     "人名/地名/机构名将无法识别，但其他脱敏规则（手机号、身份证号、金额等）不受影响。\n\n"
                     "是否继续？（仅使用正则规则脱敏）",
                 )
                 if not reply:
                     return
-                self.append_log(f"{后端名} 不可用，仅使用正则规则脱敏（人名/地名/机构名将被跳过）。")
-
-        if 扫描版列表:
-            try:
-                from .mineru桥接 import 默认ocr引擎
-            except ImportError:
-                from mineru桥接 import 默认ocr引擎
-            if not 默认ocr引擎.是否可用():
-                messagebox.showwarning(
-                    "扫描版PDF需要MinerU",
-                    f"检测到 {len(扫描版列表)} 个扫描版PDF文件，但未找到 MinerU 命令。\n"
-                    "扫描版PDF必须依赖 MinerU 做文字识别，请先安装 MinerU CLI。",
-                )
-                return
-            self.append_log(f"检测到 {len(扫描版列表)} 个扫描版PDF，MinerU 已就绪。")
+                self.append_log(f"{前缀} 不可用，仅使用正则规则脱敏（人名/地名/机构名将被跳过）。")
 
         self.is_processing = True
         self.cancel_flag = False
@@ -640,10 +660,12 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
 
     def run_desensitize(self, files: list[str], output_dir: str | None):
         processor = self._processor
+        文件总数 = len(files)
 
         def progress_callback(message: str):
             self.after(0, self.append_log, message)
             self.after(0, self.update_status_text, message)
+            import re
             m = re.search(r'\[(\d+)/(\d+)\]', message)
             if m:
                 当前 = int(m.group(1))
@@ -674,6 +696,7 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         def progress_callback(message: str):
             self.after(0, self.append_log, message)
             self.after(0, self.update_status_text, message)
+            import re
             m = re.search(r'\[(\d+)/(\d+)\]', message)
             if m:
                 当前 = int(m.group(1))
@@ -813,20 +836,6 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
             self.append_log(f"LM Studio 端口已设置为 {port}，正在检测连接...")
             self._刷新lm状态()
 
-    def _探测当前llm状态(self) -> dict:
-        """按当前 llm_mode 探测对应后端，返回统一格式 {已启动, 模型名称, 模型已加载}"""
-        if self.settings.get("llm_mode") == "online":
-            try:
-                from .mineru桥接 import 探测在线api状态
-            except ImportError:
-                from mineru桥接 import 探测在线api状态
-            return 探测在线api状态(
-                self.online_api_base_var.get().strip(),
-                self.online_api_key_var.get().strip(),
-                self.online_model_var.get().strip(),
-            )
-        return 探测lm_studio状态()
-
     def _检测lm状态(self):
         """根据当前模式调对应的状态检测函数"""
         是在线 = self.settings.get("llm_mode") == "online"
@@ -890,6 +899,14 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         前缀 = "在线 API" if 是在线 else "LM Studio"
         self.lm_status_label.configure(text=f"{前缀}: 检测中...", text_color=("gray50", "gray60"))
         self._检测lm状态()
+
+    def _简称强力审核切换(self):
+        self.settings["force_abbr_audit"] = self.checkbox_abbr_audit.get() == 1
+        save_settings(str(SETTINGS_PATH), self.settings)
+        if self.settings["force_abbr_audit"]:
+            self.append_log("简称强力审核：已开启（会增加在线调用次数，且可能有误伤）")
+        else:
+            self.append_log("简称强力审核：已关闭")
 
     def append_log(self, message: str):
         self.text_log.configure(state="normal")

@@ -68,6 +68,7 @@ def _分配文本到运行(运行列表, 替换后文本):
             chunk_len = max(1, int(替换总长 * proportion))
             remaining_runs = n - i - 1
             chunk_len = min(chunk_len, 替换总长 - pos - remaining_runs)
+            chunk_len = max(0, chunk_len)
             t_elem.text = 替换后文本[pos:pos + chunk_len]
             pos += chunk_len
 

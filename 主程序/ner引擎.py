@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 import re
 from pathlib import Path
 
@@ -228,6 +229,20 @@ class 全局映射表:
                 return
             i += 1
 
+    def 合并代号(self, 旧代号: str, 新代号: str) -> int:
+        """把旧代号下挂的所有原文整体改挂到新代号（简称并入主实体时用）
+
+        返回实际改挂的原文条数。旧代号随之作废删除。
+        """
+        if 旧代号 == 新代号:
+            return 0
+        改挂列表 = [原文 for 原文, 代号 in self._正向.items() if 代号 == 旧代号]
+        for 原文 in 改挂列表:
+            self._正向[原文] = 新代号
+        self._反向.pop(旧代号, None)
+        self._版本 += 1
+        return len(改挂列表)
+
     def 反向查找(self, 代号: str) -> str | None:
         return self._反向.get(代号)
 
@@ -342,8 +357,10 @@ class NER引擎:
     @classmethod
     def 启用调试日志(cls, 路径: str) -> None:
         import sys
+        if cls._调试日志文件:
+            cls._调试日志文件.close()
         cls._调试日志文件 = open(路径, 'w', encoding='utf-8')
-        cls._调试日志文件.write(f"=== NER调试日志 ===\n模型: {cls._MODEL}\n\n")
+        cls._调试日志文件.write(f"=== NER调试日志 ===\n")
         cls._调试日志文件.flush()
         print(f"[NER调试] 日志文件: {路径}", file=sys.stderr)
 
@@ -427,8 +444,16 @@ class NER引擎:
 
     def __init__(self) -> None:
         self._可用: bool | None = None
+        self._缓存模式 = None
+        # 跨块复用：单次 识别实体 调用内累积，多次调用间重置
+        self._已识别实体: dict[str, str] = {}
+        self._实体频次: dict[str, int] = {}
 
     def _检测lm可用性(self) -> bool:
+        当前模式 = self._读取llm配置().get("mode")
+        if 当前模式 != self._缓存模式:
+            self._可用 = None
+            self._缓存模式 = 当前模式
         if self._可用 is True:
             return True
         try:
@@ -471,24 +496,70 @@ class NER引擎:
             return []
         if not self._检测lm可用性():
             import sys
-            后端名 = "在线 API" if self._读取llm配置()["mode"] == "online" else "LM Studio"
-            print(f"[NER警告] {后端名} 未就绪，NER识别已跳过", file=sys.stderr)
+            print("[NER警告] LLM 后端未就绪，NER识别已跳过", file=sys.stderr)
             if 进度回调:
-                进度回调(-1, -1, f"NER跳过（{后端名}不可用，纯正则模式，无人名/地名识别）")
+                进度回调(-1, -1, "NER跳过（LLM不可用，纯正则模式，无人名/地名识别）")
             return []
+        # 探测完模型后写入真实模型名
+        self._写调试(f"模型: {self._MODEL}\n\n")
+        # 跨块复用：单次调用内累积，多次调用间重置（不跨文件累计）
+        self._已识别实体 = {}
+        self._实体频次 = {}
         结果: list[tuple[str, str]] = []
         段落列表 = [s for s in self._分段(文本, 最大长度=6000) if s.strip()]
         总数 = len(段落列表)
         for i, 段落 in enumerate(段落列表):
             if 进度回调:
-                进度回调(i, 总数)
-            段落结果 = self._调用llm(段落)
-            结果.extend(段落结果)
+                进度回调(i, 总数, f"NER识别 {i+1}/{总数}")
+            # 构造白名单（第 1 块为空）
+            白名单 = self._构造白名单(self._已识别实体, self._实体频次)
+            段落结果 = self._调用llm(段落, 已知实体=白名单)
+            # 累积已识别实体（防御 LLM 不遵守 prompt）
+            for 实体名, 类型 in 段落结果:
+                if 实体名 in self._已识别实体:
+                    self._实体频次[实体名] = self._实体频次.get(实体名, 1) + 1
+                    continue
+                self._已识别实体[实体名] = 类型
+                self._实体频次[实体名] = 1
+                结果.append((实体名, 类型))
         if 进度回调:
-            进度回调(总数, 总数)
+            进度回调(总数, 总数, "NER识别完成")
         return 结果
 
-    def _调用llm(self, 文本: str, _重试: int = 0) -> list[tuple[str, str]]:
+    # 白名单字符上限：800 字符 ≈ 530 token，留 ≥1000 token 安全余量（8K context window）
+    _白名单字符上限 = 800
+
+    def _构造白名单(self, 已识别实体: dict[str, str], 频次: dict[str, int], 上限字符数: int | None = None) -> dict[str, str]:
+        """根据频次挑选实体组成白名单，总字符数 ≤ 上限。
+        排序规则：频次降序，频次相同则实体名长度降序（长名优先）。
+        """
+        if not 已识别实体:
+            return {}
+        上限 = 上限字符数 if 上限字符数 is not None else self._白名单字符上限
+        排序项 = sorted(
+            已识别实体.items(),
+            key=lambda kv: (-频次.get(kv[0], 1), -len(kv[0])),
+        )
+        结果: dict[str, str] = {}
+        当前字符数 = 0
+        for 实体名, 类型 in 排序项:
+            # 每条格式 "实体名|PERSON，" ≈ len(实体名) + 1(竖线) + len(类型) + 1(逗号)
+            本项字符数 = len(实体名) + 1 + len(类型) + 1
+            if 当前字符数 + 本项字符数 > 上限:
+                continue
+            结果[实体名] = 类型
+            当前字符数 += 本项字符数
+        return 结果
+
+    @staticmethod
+    def _白名单字符数(白名单: dict[str, str]) -> int:
+        """计算白名单序列化后的字符数（用于测试断言）"""
+        总字符 = 0
+        for 实体名, 类型 in 白名单.items():
+            总字符 += len(实体名) + 1 + len(类型) + 1
+        return 总字符
+
+    def _调用llm(self, 文本: str, _重试: int = 0, *, 已知实体: dict[str, str] | None = None) -> list[tuple[str, str]]:
         import requests
         TYPE_MAP_STRICT = {
             "PERSON": "Nh",
@@ -501,13 +572,23 @@ class NER引擎:
             "ORGANIZATION": "Ni", "ORG": "Ni", "机构": "Ni", "组织": "Ni", "公司": "Ni", "单位": "Ni", "COMPANY": "Ni", "FAC": "Ni",
         }
         _最大重试 = 2
+        # 黑名单 = 已知实体原文集合，用于解析阶段防御 LLM 不遵守 prompt
+        黑名单: set[str] | None = set(已知实体.keys()) if 已知实体 else None
         try:
             调用序号 = getattr(self, '_调试调用计数', 0) + 1
             self._调试调用计数 = 调用序号
             _分隔 = f"\n{'='*80}\n"
             self._写调试(f"{_分隔}调用 #{调用序号}{_分隔}")
 
-            _完整prompt = self.NER_PROMPT + 文本
+            # 构造 prompt：基础 NER_PROMPT + 已知实体白名单段落 + 待识别文本
+            白名单段落 = ""
+            if 已知实体:
+                白名单内容 = "，".join(f"{实体名}|{类型}" for 实体名, 类型 in 已知实体.items())
+                白名单段落 = (
+                    f"\n以下是本文件前面块已识别的实体。如果它们在【待识别文本】中出现，"
+                    f"跳过它们，不要重复输出：\n{白名单内容}\n\n"
+                )
+            _完整prompt = self.NER_PROMPT + 白名单段落 + 文本
             self._写调试(f"【发送给LLM的完整内容】({len(_完整prompt)}字符)\n{_完整prompt}\n{_分隔}")
 
             _配置 = self._读取llm配置()
@@ -525,7 +606,7 @@ class NER引擎:
                     "temperature": 0.0,
                     "stream": False,
                 },
-                timeout=(180, 360),
+                timeout=(180, 600),
             )
             resp.raise_for_status()
             _完整返回 = resp.json()
@@ -539,7 +620,7 @@ class NER引擎:
             if _原始推理:
                 self._写调试(f"【LLM返回的思考过程reasoning_content】({len(_原始推理)}字符)\n{_原始推理}\n{_分隔}")
 
-            严格结果 = self._严格解析(消息, 文本, TYPE_MAP_STRICT)
+            严格结果 = self._严格解析(消息, 文本, TYPE_MAP_STRICT, 黑名单=黑名单)
             if 严格结果 is not None and len(严格结果) > 0:
                 self._写调试(f"严格解析成功: {len(严格结果)} 个实体\n")
                 for n, t in 严格结果:
@@ -552,7 +633,7 @@ class NER引擎:
                 self._写调试("严格解析返回空列表，进入兜底\n")
             else:
                 self._写调试("严格解析失败，进入兜底\n")
-            兜底结果 = self._兜底解析(消息, 文本, TYPE_MAP_LENIENT)
+            兜底结果 = self._兜底解析(消息, 文本, TYPE_MAP_LENIENT, 黑名单=黑名单)
             if 兜底结果 is not None and len(兜底结果) > 0:
                 print(f"[NER兜底] 成功提取 {len(兜底结果)} 个实体", file=sys.stderr)
                 self._写调试(f"兜底解析成功: {len(兜底结果)} 个实体\n")
@@ -571,7 +652,7 @@ class NER引擎:
                 import time as _time
                 self._写调试(f"将在 {间隔秒} 秒后重试 ({_重试 + 1}/{_最大重试})...\n")
                 _time.sleep(间隔秒)
-                return self._调用llm(文本, _重试=_重试 + 1)
+                return self._调用llm(文本, _重试=_重试 + 1, 已知实体=已知实体)
             return []
         except requests.exceptions.HTTPError as exc:
             _状态码 = exc.response.status_code if exc.response is not None else "?"
@@ -582,7 +663,7 @@ class NER引擎:
                 import time as _time
                 self._写调试(f"将在 {间隔秒} 秒后重试 ({_重试 + 1}/{_最大重试})...\n")
                 _time.sleep(间隔秒)
-                return self._调用llm(文本, _重试=_重试 + 1)
+                return self._调用llm(文本, _重试=_重试 + 1, 已知实体=已知实体)
             return []
         except json.JSONDecodeError as exc:
             self._写调试(f"!!! LLM返回JSON解析失败: {exc}\n")
@@ -609,7 +690,7 @@ class NER引擎:
         return ""
 
     @staticmethod
-    def _严格解析(消息: dict, 原文: str, TYPE_MAP: dict) -> list[tuple[str, str]] | None:
+    def _严格解析(消息: dict, 原文: str, TYPE_MAP: dict, *, 黑名单: set[str] | None = None) -> list[tuple[str, str]] | None:
         content = NER引擎._获取消息正式回答(消息)
         if not content:
             return None
@@ -636,6 +717,8 @@ class NER引擎:
                 continue
             if name not in 原文:
                 continue
+            if 黑名单 is not None and name in 黑名单:
+                continue
             内部类型 = TYPE_MAP.get(etype)
             if not 内部类型:
                 continue
@@ -643,7 +726,7 @@ class NER引擎:
         return 结果
 
     @staticmethod
-    def _兜底解析(消息: dict, 原文: str, TYPE_MAP: dict) -> list[tuple[str, str]] | None:
+    def _兜底解析(消息: dict, 原文: str, TYPE_MAP: dict, *, 黑名单: set[str] | None = None) -> list[tuple[str, str]] | None:
         原始文本 = NER引擎._提取消息文本(消息)
         if not 原始文本:
             return None
@@ -694,7 +777,9 @@ class NER引擎:
                 continue
             if name not in 原文:
                 continue
-            内部类型 = TYPE_MAP.get(etype.upper() if etype else "ORGANIZATION")
+            if 黑名单 is not None and name in 黑名单:
+                continue
+            内部类型 = TYPE_MAP.get(str(etype).upper() if etype else "ORGANIZATION")
             if not 内部类型:
                 内部类型 = "Ni"
             结果.append((name, 内部类型))
@@ -1010,7 +1095,7 @@ class NER引擎:
                     "temperature": 0.0,
                     "stream": False,
                 },
-                timeout=(180, 360),
+                timeout=(180, 600),
             )
             resp.raise_for_status()
             消息 = resp.json()["choices"][0]["message"]
@@ -1053,6 +1138,49 @@ class NER引擎:
             return []
         except Exception:
             return []
+
+    # "（以下简称"××"）"声明模式：文档作者亲口声明简称，是同实体判定的权威线索
+    _简称声明模式 = re.compile(
+        r'[（(]\s*以下简称\s*[:：]?\s*'
+        r'["“‘「『]?([\u4e00-\u9fffA-Za-z0-9·\-.]{2,20})["”’」』]?\s*[）)]'
+    )
+    # 仅当紧邻前文命中的主实体是机构类代号时才合并，防止误挂到日期/人名等代号上
+    _合并机构标签集合 = {"公司", "机关", "事业单位", "协会", "机构", "合伙企业"}
+
+    def _合并简称声明(self, 文本: str, 映射: 全局映射表) -> int:
+        """扫描"××（以下简称"××"）"声明，把简称并入紧邻主实体的代号
+
+        返回合并次数。简称未登记时直接登记到主代号；已登记但编号不同时，
+        用 合并代号 把旧代号下所有原文（含脱壳变体）整体并入主代号。
+        """
+        合并数 = 0
+        for 匹配 in self._简称声明模式.finditer(文本):
+            简称 = 匹配.group(1)
+            # 简称声明紧跟在全称之后：取括号前文字，剥掉收尾引号后与已登记实体做结尾匹配
+            前文 = 文本[:匹配.start()].rstrip().rstrip('"\'”’」』').rstrip()
+            if not 前文:
+                continue
+            主实体 = None
+            for 已有 in sorted(映射.正向映射, key=len, reverse=True):
+                if len(已有) < 4 or 已有 == 简称:
+                    continue
+                if 前文.endswith(已有):
+                    主实体 = 已有
+                    break
+            if 主实体 is None:
+                continue
+            主代号 = 映射._正向[主实体]
+            if not any(tag in 主代号 for tag in self._合并机构标签集合):
+                continue
+            if 简称 in 映射.正向映射:
+                旧代号 = 映射._正向[简称]
+                if 旧代号 == 主代号:
+                    continue
+                合并数 += 映射.合并代号(旧代号, 主代号)
+            else:
+                映射.注册自定义映射(简称, 主代号)
+                合并数 += 1
+        return 合并数
 
     def _分段(self, 文本: str, 最大长度: int = 500, 重叠量: int = 50) -> list[str]:
         if len(文本) <= 最大长度:
@@ -1212,7 +1340,18 @@ class NER引擎:
                 待审核列表.append(候选名)
         if 自动注册计数 and 进度回调:
             进度回调(-1, -1, f"简称 自动注册{自动注册计数}个，待LLM审核{len(待审核列表)}个")
-        if not llm已产出实体 and 待审核列表:
+        强制审核简称 = False
+        try:
+            from .mineru桥接 import 读取用户设置
+        except ImportError:
+            from mineru桥接 import 读取用户设置
+        try:
+            _设置 = 读取用户设置()
+            强制审核简称 = _设置.get("force_abbr_audit") is True
+        except Exception:
+            强制审核简称 = False
+
+        if (强制审核简称 or not llm已产出实体) and 待审核列表:
             # 正则兜底模式：送LLM审核未知简称
             通过审核: list[str] = []
             批次大小 = 50
@@ -1228,7 +1367,12 @@ class NER引擎:
                 子类型 = 判断机构子类型(候选名)
                 映射.查找或创建(候选名, 子类型)
         elif llm已产出实体 and 待审核列表 and 进度回调:
-            进度回调(-1, -1, f"跳过{len(待审核列表)}个未知简称的LLM审核（NER已产出实体）")
+            进度回调(-1, -1, f"跳过{len(待审核列表)}个未知简称的LLM审核（NER已产出实体，未开启强力审核）")
+
+        # 简称声明合并：所有识别来源登记完毕后统一执行，确保"××（以下简称"××"）"指向同一代号
+        声明合并数 = self._合并简称声明(文本, 映射)
+        if 声明合并数 and 进度回调:
+            进度回调(-1, -1, f"简称声明合并{声明合并数}处")
 
         机构标签集合 = {"公司", "机关", "事业单位", "协会", "机构", "合伙企业"}
         映射中机构数 = sum(

@@ -39,10 +39,17 @@ def 验证office文件格式(文件路径: str) -> None:
         )
 
 
+def _读取文本文件(路径: str) -> str:
+    try:
+        return Path(路径).read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return Path(路径).read_text(encoding="gbk", errors="replace")
+
+
 def 提取文本(文件路径: str) -> str:
     后缀 = Path(文件路径).suffix.lower()
     if 后缀 in {".txt", ".md"}:
-        return Path(文件路径).read_text(encoding="utf-8")
+        return _读取文本文件(文件路径)
     if 后缀 == ".docx":
         return _提取docx文本(文件路径)
     if 后缀 == ".doc":

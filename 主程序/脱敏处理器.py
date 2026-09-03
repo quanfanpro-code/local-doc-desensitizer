@@ -59,6 +59,10 @@ class 脱敏处理器:
 
         总数 = len(文件路径列表)
 
+        # 输出目录提前创建，避免后续写结果/映射表时因目录不存在而失败
+        if 目标目录:
+            Path(目标目录).mkdir(parents=True, exist_ok=True)
+
         for 序号, 文件路径 in enumerate(文件路径列表, 1):
             if self._取消标记:
                 break
@@ -141,6 +145,7 @@ class 脱敏处理器:
     ) -> 脱敏处理结果:
         from 主程序.格式保持器 import 还原并保存原格式
 
+        self._取消标记 = False
         目标目录 = 输出目录 or ""
         结果 = 脱敏处理结果()
 

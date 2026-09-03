@@ -96,8 +96,8 @@ def 探测lm_studio状态() -> dict:
 def 规范化在线api地址(原始地址: str) -> str:
     """智能规范化在线 API 地址，统一规范化到 /v1 这一级。
 
-    规则：去空白 -> 补协议头 -> 去尾斜杠 -> 正则提取到 /v1 为止 -> 没有则补 /v1。
-    处理用户直接从 curl 复制完整地址（含 /v1/chat/completions）的情况。
+    规则：去空白 -> 补协议头 -> 去尾斜杠 -> 正则提取到版本号（/v1、/v3 等）为止 -> 没有则补 /v1。
+    处理用户直接从 curl 复制完整地址（含 /v1/chat/completions 或 /v3/chat/completions）的情况。
     """
     地址 = 原始地址.strip()
     if not 地址:
@@ -106,7 +106,7 @@ def 规范化在线api地址(原始地址: str) -> str:
         地址 = "https://" + 地址
     地址 = 地址.rstrip("/")
     import re
-    m = re.match(r"^(https?://.*?/v1)", 地址)
+    m = re.match(r"^(https?://.*?/v\d+)(?:/|$|\?|#)", 地址)
     if m:
         return m.group(1)
     return 地址 + "/v1"
@@ -143,10 +143,34 @@ def 探测在线api状态(api_base: str, api_key: str, model: str = "") -> dict:
         结果["已启动"] = True
         if model:
             结果["模型名称"] = model
+            已匹配 = False
             for m in 模型列表:
                 if str(m.get("id") or "") == model:
                     结果["模型已加载"] = True
+                    已匹配 = True
                     break
+            # 某些服务商（如火山代码模型）的模型名是别名，不出现在 /models 列表里。
+            # 列表里找不到时，发一条极小的对话消息做真实冒烟测试，能通就认为可用，
+            # 避免把“能用的别名”误判成“模型未匹配”。
+            if not 已匹配:
+                规范化地址 = 规范化在线api地址(api_base)
+                try:
+                    import requests
+                    _冒烟 = requests.post(
+                        f"{规范化地址}/chat/completions",
+                        headers={"Authorization": f"Bearer {api_key}"},
+                        json={
+                            "model": model,
+                            "messages": [{"role": "user", "content": "OK"}],
+                            "temperature": 0.0,
+                            "stream": False,
+                        },
+                        timeout=(30, 60),
+                    )
+                    _冒烟.raise_for_status()
+                    结果["模型已加载"] = True
+                except Exception:
+                    结果["模型已加载"] = False
         else:
             if 模型列表:
                 第一个 = str(模型列表[0].get("id") or "")
@@ -181,6 +205,8 @@ class MinerU引擎:
                     stderr=subprocess.PIPE,
                     timeout=超时,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                 )
             except subprocess.TimeoutExpired:
                 raise RuntimeError(f"MinerU 处理超时（{超时}秒）")

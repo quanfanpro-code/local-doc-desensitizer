@@ -148,11 +148,12 @@ class TestNER引擎辅助方法(unittest.TestCase):
 
     def test_检测lm可用性_没有已加载文本模型时返回假(self):
         引擎 = NER引擎()
-        with patch("主程序.mineru桥接.获取lm_studio模型列表", return_value=[
-            {"id": "嵌入模型", "type": "embeddings", "state": "loaded"},
-            {"id": "文本模型", "type": "llm", "state": "not-loaded"},
-        ]):
-            self.assertFalse(引擎._检测lm可用性())
+        with patch("主程序.mineru桥接.读取用户设置", return_value={"llm_mode": "local", "lm_port": 1234}):
+            with patch("主程序.mineru桥接.获取lm_studio模型列表", return_value=[
+                {"id": "嵌入模型", "type": "embeddings", "state": "loaded"},
+                {"id": "文本模型", "type": "llm", "state": "not-loaded"},
+            ]):
+                self.assertFalse(引擎._检测lm可用性())
 
 
 if __name__ == "__main__":
