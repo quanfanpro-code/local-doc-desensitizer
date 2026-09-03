@@ -11,3 +11,4 @@ venv/
 # ===== 临时与日志 =====
 *.log
 *.tmp
+*.baiduyun.uploading.cfg

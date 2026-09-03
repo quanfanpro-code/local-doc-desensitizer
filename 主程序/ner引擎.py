@@ -202,12 +202,17 @@ class 全局映射表:
 
     _圈数字 = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩"]
 
-    def 注册自定义映射(self, 原文: str, 替换值: str) -> None:
+    def 注册自定义映射(self, 原文: str, 替换值: str, *, 允许共用: bool = False) -> None:
         if 原文 in self._正向:
             return
         if 替换值 not in self._反向:
             self._正向[原文] = 替换值
             self._反向[替换值] = 原文
+            self._版本 += 1
+            return
+        if 允许共用:
+            # 简称声明合并：多个原文共用同一代号是期望行为，不再加后缀
+            self._正向[原文] = 替换值
             self._版本 += 1
             return
         for i in range(2, len(self._圈数字) + 2):
@@ -243,9 +248,6 @@ class 全局映射表:
         self._版本 += 1
         return len(改挂列表)
 
-    def 反向查找(self, 代号: str) -> str | None:
-        return self._反向.get(代号)
-
     @property
     def 正向映射(self) -> dict[str, str]:
         return dict(self._正向)
@@ -253,9 +255,6 @@ class 全局映射表:
     @property
     def 反向映射(self) -> dict[str, str]:
         return dict(self._反向)
-
-    def 导出(self) -> dict[str, str]:
-        return self.正向映射
 
     映射表代号模式 = re.compile(r"^\[([^]]+?)(\d+)\]$")
 
@@ -1178,7 +1177,7 @@ class NER引擎:
                     continue
                 合并数 += 映射.合并代号(旧代号, 主代号)
             else:
-                映射.注册自定义映射(简称, 主代号)
+                映射.注册自定义映射(简称, 主代号, 允许共用=True)
                 合并数 += 1
         return 合并数
 
