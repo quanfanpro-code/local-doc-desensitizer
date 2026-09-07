@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>脱敏工具 · 一看就会的使用说明</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: "Microsoft YaHei", "微软雅黑", sans-serif;
+    background: #f0f4f8;
+    color: #2d3748;
+    line-height: 1.7;
+  }
+  .hero {
+    background: linear-gradient(135deg, #2b6cb0, #4c51bf);
+    color: #fff;
+    text-align: center;
+    padding: 70px 20px 60px;
+  }
+  .hero .lock { font-size: 80px; }
+  .hero h1 { font-size: 42px; margin: 16px 0 10px; }
+  .hero p { font-size: 22px; opacity: .92; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 30px 20px 80px; }
+  .card {
+    background: #fff;
+    border-radius: 20px;
+    padding: 40px 44px;
+    margin: 34px 0;
+    box-shadow: 0 4px 18px rgba(0,0,0,.07);
+  }
+  h2 {
+    font-size: 30px;
+    color: #2b6cb0;
+    margin-bottom: 18px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  h2 .num {
+    background: #2b6cb0; color: #fff;
+    width: 46px; height: 46px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 24px; flex-shrink: 0;
+  }
+  .big { font-size: 21px; }
+  .pic {
+    text-align: center;
+    font-size: 46px;
+    background: #ebf4ff;
+    border-radius: 14px;
+    padding: 26px 10px;
+    margin: 18px 0;
+    letter-spacing: 6px;
+  }
+  .pic small { display: block; font-size: 17px; letter-spacing: 0; color: #4a5568; margin-top: 10px; }
+  .step {
+    display: flex; gap: 16px; align-items: flex-start;
+    background: #f7fafc;
+    border-left: 6px solid #63b3ed;
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 14px 0;
+    font-size: 19px;
+  }
+  .step .s {
+    background: #63b3ed; color: #fff;
+    min-width: 34px; height: 34px; border-radius: 50%;
+    display: inline-flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0; margin-top: 2px;
+  }
+  .warn {
+    background: #fffaf0;
+    border: 2px solid #ed8936;
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 14px 0;
+    font-size: 19px;
+  }
+  .warn b { color: #c05621; }
+  .key {
+    background: #f0fff4;
+    border: 2px solid #48bb78;
+    border-radius: 12px;
+    padding: 18px 22px;
+    margin: 14px 0;
+    font-size: 19px;
+  }
+  .key b { color: #2f855a; }
+  kbd, code {
+    background: #edf2f7;
+    border-radius: 6px;
+    padding: 2px 8px;
+    font-size: 17px;
+    color: #2b6cb0;
+  }
+  .qa { margin: 14px 0; font-size: 19px; }
+  .qa .q { font-weight: bold; color: #2b6cb0; }
+  .footer { text-align: center; color: #718096; font-size: 16px; padding: 20px; }
+  .btn-demo {
+    display: inline-block;
+    background: #2b6cb0; color: #fff;
+    border-radius: 8px; padding: 6px 20px;
+    font-size: 18px; margin: 0 4px;
+  }
+  .btn-demo.gray { background: #718096; }
+</style>
+</head>
+<body>
+
+<div class="hero">
+  <div class="lock">🔒</div>
+  <h1>本地文档脱敏工具</h1>
+  <p>把文档里的敏感信息一键换成代号，还能随时换回来</p>
+</div>
+
+<div class="wrap">
+
+<!-- 这是什么 -->
+<div class="card">
+  <h2>🧐 这是什么？</h2>
+  <p class="big">它就像一个「打码机器」：</p>
+  <div class="pic">
+    张三 13812345678 某某公司<br>⬇️<br>[人物1] [手机号1] [公司1]
+    <small>文档里的名字、电话、公司名、身份证号……统统换成代号</small>
+  </div>
+  <p class="big">换完之后会送你一本「密码本」（映射表文件），拿着它随时能<b>还原回原文</b>。</p>
+  <div class="key">✅ <b>零设置、零安装：</b>什么都不用配，双击打开就能用。处理时需要联网。</div>
+</div>
+
+<!-- 第一步 -->
+<div class="card">
+  <h2><span class="num">1</span> 打开程序</h2>
+  <div class="pic">🖱️ 双击那个 exe 文件<small>不用安装，双击就开（第一次打开可能要等十几秒）</small></div>
+  <div class="warn">⚠️ <b>如果打不开：</b>Windows 可能会弹蓝色提示框，点「仍要运行」就行。这是因为它不是应用商店下载的，属于正常现象。</div>
+</div>
+
+<!-- 第二步 -->
+<div class="card">
+  <h2><span class="num">2</span> 脱敏（把敏感信息换成代号）</h2>
+  <div class="step"><span class="s">1</span><div>点 <span class="btn-demo gray">选择文件</span> 或 <span class="btn-demo gray">选择文件夹</span>，把要处理的文档选进来</div></div>
+  <div class="step"><span class="s">2</span><div>（可跳过）点「选择目录」指定结果放哪；不选就放在原文件旁边</div></div>
+  <div class="step"><span class="s">3</span><div>点 <span class="btn-demo">开始脱敏</span>，看下面的日志滚动，等它跑完</div></div>
+  <div class="pic">📄 合同.docx<br>⬇️<br>✅ 合同_脱敏.docx　✅ 合同_脱敏映射表.json　✅ 合同_脱敏.md</div>
+  <div class="warn">⚠️ <b>那个叫「映射表」的 json 文件就是密码本！</b>千万别删、别改名、别乱发。丢了它，脱敏后的文件就<b>永远还原不回来了</b>。建议单独备份一份。</div>
+  <p class="big">📌 支持的文件：<code>.txt</code> <code>.md</code> <code>.docx</code> <code>.xlsx</code> <code>.pptx</code> <code>.pdf</code>（旧版 .doc/.xls/.ppt 要先另存为新格式）</p>
+</div>
+
+<!-- 第三步 -->
+<div class="card">
+  <h2><span class="num">3</span> 还原（把代号换回原文）</h2>
+  <div class="step"><span class="s">1</span><div>把「xxx_脱敏.docx」和它的「xxx_脱敏映射表.json」<b>放在同一个文件夹里</b></div></div>
+  <div class="step"><span class="s">2</span><div>在程序里选中那个「xxx_脱敏」文件</div></div>
+  <div class="step"><span class="s">3</span><div>点 <span class="btn-demo">开始还原</span>，得到「xxx_脱敏_还原.docx」，内容和原文一模一样</div></div>
+</div>
+
+<!-- 注意 -->
+<div class="card">
+  <h2>⚠️ 三个重要提醒</h2>
+  <div class="warn"><b>1. 脱敏后自己再翻一遍。</b>机器认名字不是 100% 准，可能漏几个，发出去之前务必检查。</div>
+  <div class="warn"><b>2. 重要文件先备份原件再处理。</b>好习惯，不亏。</div>
+  <div class="warn"><b>3. 图片里的字认不出来。</b>扫描版 PDF 只会输出一个 .md 纯文本版，不会生成新的 PDF。</div>
+</div>
+
+<!-- 常见问题 -->
+<div class="card">
+  <h2>❓ 常见问题</h2>
+  <div class="qa"><p class="q">问：能一次处理一整个文件夹吗？</p><p>答：能。选文件夹，勾上「包含子文件夹」就行。</p></div>
+  <div class="qa"><p class="q">问：处理到一半想停怎么办？</p><p>答：点「取消处理」，已经处理完的文件不受影响。</p></div>
+  <div class="qa"><p class="q">问：要联网吗？</p><p>答：要。识别人名、公司名用的是在线服务，处理时请保持网络畅通。</p></div>
+  <div class="qa"><p class="q">问：映射表丢了怎么办？</p><p>答：那个文件就还原不了了。所以处理完先把映射表备份好。</p></div>
+  <div class="qa"><p class="q">问：大文件要等多久？</p><p>答：几百页的大文档可能要几分钟，看日志进度，耐心等就好。</p></div>
+</div>
+
+</div>
+
+<div class="footer">🔒 本地文档脱敏工具 · 用得顺手就是最好的说明书</div>
+
+</body>
+</html>
