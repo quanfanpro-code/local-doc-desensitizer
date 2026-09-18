@@ -43,4 +43,4 @@
 
 ## 交付
 
-阶段 1—5 完成。按用户已明确选择直接提交和推送现有 main，远端核对结果随后记录；不再等待用户选择 Git 动作。
+六阶段完成。功能提交 [3e7bac9](https://github.com/quanfanpro-code/local-doc-desensitizer/commit/3e7bac9b9fad0220d41087df7e74a68a249d6032) 已直接推送到 main，已用 ls-remote 核对远端完整提交号与本地相同。本次补记仅更新交付文档，不改变已通过 124 项回归的源码。没有新建分支、创建 PR 或发布安装包。

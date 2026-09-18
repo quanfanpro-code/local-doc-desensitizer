@@ -2,7 +2,7 @@
 
 日期：2026-09-18
 
-状态：阶段 1—5 已完成；后续用户已授权 Excel 优化后直接提交推送现有 main，交付执行中。
+状态：六阶段已完成；含后续 Excel 优化的功能提交 3e7bac9 已按用户授权直接推送现有 main，远端已核对。
 
 目标项目：quanfanpro-code/local-doc-desensitizer
 对比项目：silent-quills/datamask
