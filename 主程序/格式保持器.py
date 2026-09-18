@@ -6,9 +6,16 @@ from pathlib import Path
 from 主程序.ner引擎 import 全局映射表
 
 
+def 保存定位脱敏(原路径, 块列表, 识别结果, 映射, 输出目录=None):
+    from 主程序.定位写回 import 保存
+    return 保存(原路径, 块列表, 识别结果, 映射, _构建输出路径(原路径, 输出目录))
+
+
 def 脱敏并保存原格式(文件路径: str, 映射: 全局映射表, 输出目录: str | None = None) -> str:
     后缀 = Path(文件路径).suffix.lower()
     输出路径 = _构建输出路径(文件路径, 输出目录)
+    from 主程序.定位写回 import 备份已有输出
+    备份已有输出(输出路径)
     if 后缀 in {".txt", ".md"}:
         return _脱敏文本文件(文件路径, 映射, 输出路径)
     if 后缀 == ".docx":
@@ -25,6 +32,11 @@ def 脱敏并保存原格式(文件路径: str, 映射: 全局映射表, 输出�
 def 还原并保存原格式(文件路径: str, 映射: 全局映射表, 输出目录: str | None = None) -> str:
     后缀 = Path(文件路径).suffix.lower()
     输出路径 = _构建还原路径(文件路径, 输出目录)
+    if any(r.get("格式") == 后缀 for r in 映射.文件记录):
+        from 主程序.定位写回 import 还原
+        return 还原(文件路径, 映射, 输出路径)
+    from 主程序.定位写回 import 备份已有输出
+    备份已有输出(输出路径)
     if 后缀 in {".txt", ".md"}:
         return _还原文本文件(文件路径, 映射, 输出路径)
     if 后缀 == ".docx":
@@ -46,6 +58,8 @@ def 生成脱敏md(文件路径: str, 映射: 全局映射表, 输出目录: str
         原始文本 = 提取文本(文件路径)
     脱敏文本 = 映射.批量替换文本(原始文本)
     输出路径 = _构建md输出路径(文件路径, 输出目录)
+    from 主程序.定位写回 import 备份已有输出
+    备份已有输出(输出路径)
     Path(输出路径).write_text(脱敏文本, encoding="utf-8")
     return 输出路径
 
@@ -251,89 +265,34 @@ def _还原ppt(路径: str, 映射: 全局映射表, 输出路径: str) -> str:
     return 输出路径
 
 
-def _脱敏pdf(路径: str, 映射: 全局映射表, 输出路径: str) -> str:
-    import fitz
-    import tempfile
-    import os
-    目标目录 = os.path.dirname(输出路径)
-    os.makedirs(目标目录, exist_ok=True)
-    fd, 临时路径 = tempfile.mkstemp(suffix=".pdf", dir=目标目录)
-    os.close(fd)
-    doc = None
-    try:
-        shutil.copy2(路径, 临时路径)
-        doc = fitz.open(临时路径)
-        映射项 = sorted(映射.正向映射.items(), key=lambda x: len(x[0]), reverse=True)
-        for 页面 in doc:
-            文本 = 页面.get_text()
-            if not 文本.strip():
-                continue
-            脱敏文本 = 映射.批量替换文本(文本)
-            if 脱敏文本 == 文本:
-                continue
-            for 原文, 代号 in 映射项:
-                if 原文 not in 文本:
-                    continue
-                搜索结果 = 页面.search_for(原文)
-                for 矩形 in 搜索结果:
-                    页面.add_redact_annot(矩形, 代号, fontname="china-s", fontsize=8)
-            页面.apply_redactions()
-        doc.save(临时路径)
-        doc.close()
-        doc = None
-        shutil.move(临时路径, 输出路径)
-    except Exception:
-        if doc is not None:
-            try:
-                doc.close()
-            except Exception:
-                pass
-        if os.path.exists(临时路径):
-            try:
-                os.unlink(临时路径)
-            except Exception:
-                pass
-        raise
+def _既有映射PDF(路径, 项目, 输出路径):
+    """旧映射接口仍支持 PDF；读取原件、保存到不同目标，避免同路径保存错误。"""
+    import pymupdf
+    from 主程序.定位写回 import 备份已有输出, _PDF插入
+    if Path(路径).resolve() == Path(输出路径).resolve():
+        raise ValueError("输出路径不能覆盖原件")
+    with pymupdf.open(路径) as doc:
+        写入 = []
+        for page in doc:
+            已占 = []
+            for 原词,替换 in sorted(项目.items(),key=lambda x:len(x[0]),reverse=True):
+                for rect in page.search_for(原词):
+                    if any((rect & r).get_area() > 0 for r in 已占):
+                        continue
+                    page.add_redact_annot(rect,fill=(1,1,1))
+                    已占.append(rect)
+                    写入.append((page.number,rect,替换))
+            page.apply_redactions(graphics=0)
+        for 页,rect,text in 写入:
+            _PDF插入(doc[页],rect,text,10)
+        备份已有输出(输出路径)
+        doc.save(输出路径,garbage=4,deflate=True)
     return 输出路径
+
+
+def _脱敏pdf(路径: str, 映射: 全局映射表, 输出路径: str) -> str:
+    return _既有映射PDF(路径,映射.正向映射,输出路径)
 
 
 def _还原pdf(路径: str, 映射: 全局映射表, 输出路径: str) -> str:
-    import fitz
-    import tempfile
-    import os
-    目标目录 = os.path.dirname(输出路径)
-    os.makedirs(目标目录, exist_ok=True)
-    fd, 临时路径 = tempfile.mkstemp(suffix=".pdf", dir=目标目录)
-    os.close(fd)
-    doc = None
-    try:
-        shutil.copy2(路径, 临时路径)
-        doc = fitz.open(临时路径)
-        for 页面 in doc:
-            文本 = 页面.get_text()
-            还原文本 = 映射.批量还原文本(文本)
-            if 还原文本 != 文本:
-                for 代号, 原文 in 映射.反向映射.items():
-                    if 代号 not in 文本:
-                        continue
-                    搜索结果 = 页面.search_for(代号)
-                    for 矩形 in 搜索结果:
-                        页面.add_redact_annot(矩形, 原文, fontname="china-s", fontsize=8)
-            页面.apply_redactions()
-        doc.save(临时路径)
-        doc.close()
-        doc = None
-        shutil.move(临时路径, 输出路径)
-    except Exception:
-        if doc is not None:
-            try:
-                doc.close()
-            except Exception:
-                pass
-        if os.path.exists(临时路径):
-            try:
-                os.unlink(临时路径)
-            except Exception:
-                pass
-        raise
-    return 输出路径
+    return _既有映射PDF(路径,映射.反向映射,输出路径)

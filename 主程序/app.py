@@ -366,13 +366,8 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         self.checkbox_amount.grid(row=3, column=0, columnspan=2, padx=(0, 0), pady=(0, 0), sticky="w")
         # 默认不勾选金额脱敏
 
-        self.checkbox_abbr_audit = ctk.CTkCheckBox(
-            options_frame, text="简称强力审核", font=ctk.CTkFont(size=12),
-            command=self._简称强力审核切换,
-        )
-        self.checkbox_abbr_audit.grid(row=4, column=0, columnspan=2, padx=(0, 0), pady=(6, 0), sticky="w")
-        if self.settings.get("force_abbr_audit"):
-            self.checkbox_abbr_audit.select()
+        ctk.CTkLabel(options_frame, text="机构简称自动核对",
+            font=ctk.CTkFont(size=12)).grid(row=4,column=0,columnspan=2,pady=(6,0),sticky="w")
 
         right_frame = ctk.CTkFrame(self.ctrl_card, fg_color="transparent")
         right_frame.grid(row=0, column=2, padx=(6, 14), pady=12, sticky="ew")
@@ -417,11 +412,11 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         )
         self.btn_cancel.grid(row=0, column=2, padx=(0, 10), sticky="w")
 
-        self.progress_frame = ctk.CTkFrame(right_frame, fg_color="transparent")
-        self.progress_frame.grid(row=0, column=3, sticky="ew")
+        self.progress_frame = ctk.CTkFrame(self.ctrl_card, fg_color="transparent")
+        self.progress_frame.grid(row=1, column=0, columnspan=3,padx=14,pady=(0,12),sticky="ew")
         self.progress_frame.grid_columnconfigure(0, weight=1)
 
-        self.status_label = ctk.CTkLabel(self.progress_frame, text="就绪", font=ctk.CTkFont(size=12))
+        self.status_label = ctk.CTkLabel(self.progress_frame, text="就绪", font=ctk.CTkFont(size=12),wraplength=720,justify="left")
         self.status_label.grid(row=0, column=0, sticky="w")
 
         self.progress_text = ctk.CTkLabel(self.progress_frame, text="", font=ctk.CTkFont(size=12))
@@ -670,19 +665,25 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
             if m:
                 当前 = int(m.group(1))
                 总数 = int(m.group(2))
-                self.after(0, lambda: self.progress_text.configure(text=f"{当前}/{总数}"))
-                self.after(0, lambda: self.progressbar.configure(value=当前 / 总数))
+                self.after(0, lambda t=f"{当前}/{总数}": self.progress_text.configure(text=t))
+                self.after(0, self.progressbar.set, 当前 / 总数)
 
         try:
             result = processor.处理文件列表(files, output_dir, progress_callback)
             if self.cancel_flag:
                 self.after(0, self.update_status_text, f"已取消：成功 {result.成功数}，失败 {result.失败数}")
+            elif result.未完成环节:
+                self.after(0, self.update_status_text, f"已生成 {len(result.已生成文件)} 个文件；完整处理 {result.成功数} 个，部分环节未完成")
             elif result.失败数 > 0:
                 self.after(0, self.update_status_text, f"脱敏完成：成功 {result.成功数}，失败 {result.失败数}")
             else:
                 self.after(0, self.update_status_text, f"脱敏完成：全部成功 {result.成功数} 个文件")
             for 映射表 in result.映射表路径列表:
                 self.after(0, self.append_log, f"映射表已保存：{映射表}")
+            for 输出 in result.已生成文件:
+                self.after(0, self.append_log, f"处理文件已保存：{输出}")
+            for 问题 in result.未完成环节:
+                self.after(0, self.append_log, f"未完成：{Path(问题['文件']).name}；{问题.get('环节','')}；位置 {问题.get('块编号','全文')}；{问题.get('原因','')}")
             for 失败文件, 错误信息 in result.失败文件:
                 self.after(0, self.append_log, f"失败：{Path(失败文件).name} - {错误信息}")
         finally:
@@ -700,12 +701,14 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
             m = re.search(r'\[(\d+)/(\d+)\]', message)
             if m:
                 当前 = int(m.group(1))
-                self.after(0, lambda: self.progress_text.configure(text=f"{当前}/{文件总数}"))
-                self.after(0, lambda: self.progressbar.configure(value=当前 / 文件总数))
+                self.after(0, lambda t=f"{当前}/{文件总数}": self.progress_text.configure(text=t))
+                self.after(0, self.progressbar.set, 当前 / 文件总数)
 
         try:
             result = processor.还原文件列表(files, 映射表路径=None, 输出目录=output_dir, 进度回调=progress_callback)
-            if result.失败数 > 0:
+            if result.未完成环节:
+                self.after(0, self.update_status_text, f"已生成 {len(result.已生成文件)} 个还原文件；旧映射存在歧义，详见日志")
+            elif result.失败数 > 0:
                 self.after(0, self.update_status_text, f"还原完成：成功 {result.成功数}，失败 {result.失败数}")
             else:
                 self.after(0, self.update_status_text, f"还原完成：全部成功 {result.成功数} 个文件")
@@ -899,14 +902,6 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         前缀 = "在线 API" if 是在线 else "LM Studio"
         self.lm_status_label.configure(text=f"{前缀}: 检测中...", text_color=("gray50", "gray60"))
         self._检测lm状态()
-
-    def _简称强力审核切换(self):
-        self.settings["force_abbr_audit"] = self.checkbox_abbr_audit.get() == 1
-        save_settings(str(SETTINGS_PATH), self.settings)
-        if self.settings["force_abbr_audit"]:
-            self.append_log("简称强力审核：已开启（会增加在线调用次数，且可能有误伤）")
-        else:
-            self.append_log("简称强力审核：已关闭")
 
     def append_log(self, message: str):
         self.text_log.configure(state="normal")

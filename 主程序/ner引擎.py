@@ -186,15 +186,57 @@ class 全局映射表:
         self._自动机反向 = None
         self._自动机正向版本: int = -1
         self._自动机反向版本: int = -1
+        self._机构: dict[str, dict] = {}
+        self._保留代号: set[str] = set()
+        self._歧义原词: set[str] = set()
+        self.文件记录: list[dict] = []
+        self.载入提示: list[str] = []
+
+    def 保留原文代号(self, 原文: str) -> None:
+        self._保留代号.update(re.findall(r"\[[^\]\r\n]+\d+\]", 原文))
+
+    def _分配主代号(self, 类型: str) -> str:
+        标签 = ENTITY_TYPE_LABELS.get(类型, 类型)
+        序号 = self._计数器.get(标签, 0)
+        while True:
+            序号 += 1
+            代号 = f"[{标签}{序号}]"
+            if 代号 not in self._反向 and 代号 not in self._保留代号:
+                self._计数器[标签] = 序号
+                return 代号
+
+    def 注册机构称呼(self, 机构编号: str, 原文: str, 子类型: str, 是否全称: bool = False) -> str:
+        if not 机构编号 or not 原文:
+            raise ValueError("机构编号和原文不能为空")
+        if 机构编号 not in self._机构:
+            self._机构[机构编号] = {"主代号": self._分配主代号(子类型), "称呼": {}, "下个序号": 1}
+        机构 = self._机构[机构编号]
+        if 原文 in 机构["称呼"]:
+            return 机构["称呼"][原文]
+        代号 = 机构["主代号"]
+        if not 是否全称 or 代号 in self._反向:
+            while True:
+                序号 = 机构["下个序号"]
+                机构["下个序号"] += 1
+                后缀 = self._圈数字[序号 - 1] if 序号 <= len(self._圈数字) else f"({序号})"
+                代号 = 机构["主代号"] + 后缀
+                if 代号 not in self._反向 and 代号 not in self._保留代号:
+                    break
+        机构["称呼"][原文] = 代号
+        if 原文 in self._正向 and self._正向[原文] != 代号:
+            self._歧义原词.add(原文)
+            self._正向.pop(原文)
+        elif 原文 not in self._歧义原词:
+            self._正向[原文] = 代号
+        self._反向[代号] = 原文
+        self._版本 += 1
+        return 代号
 
     def 查找或创建(self, 原文: str, 实体类型: str) -> str:
         if 原文 in self._正向:
             return self._正向[原文]
 
-        标签 = ENTITY_TYPE_LABELS.get(实体类型, 实体类型)
-        序号 = self._计数器.get(标签, 0) + 1
-        self._计数器[标签] = 序号
-        代号 = f"[{标签}{序号}]"
+        代号 = self._分配主代号(实体类型)
         self._正向[原文] = 代号
         self._反向[代号] = 原文
         self._版本 += 1
@@ -259,9 +301,23 @@ class 全局映射表:
     映射表代号模式 = re.compile(r"^\[([^]]+?)(\d+)\]$")
 
     def 从文件加载(self, 路径: str | Path) -> None:
-        data = json.loads(Path(路径).read_text(encoding="utf-8"))
-        self._正向 = dict(data)
-        self._反向 = {v: k for k, v in data.items()}
+        data = json.loads(Path(路径).read_text(encoding="utf-8-sig"))
+        self.__init__()
+        if isinstance(data, dict) and data.get("version") == 2:
+            self._正向 = dict(data["正向"])
+            self._反向 = dict(data["反向"])
+            self._机构 = dict(data.get("机构", {}))
+            self._保留代号 = set(data.get("保留代号", []))
+            self._歧义原词 = set(data.get("歧义原词", []))
+            self._计数器 = dict(data.get("计数器", {}))
+            self.文件记录 = list(data.get("文件记录", []))
+        elif isinstance(data, dict) and all(isinstance(v, str) for v in data.values()):
+            self._正向 = dict(data)
+            self._反向 = {v: k for k, v in data.items()}
+            if len(self._反向) != len(self._正向):
+                self.载入提示.append("旧映射存在共用代号，无法恢复每处最初写法；沿用旧版还原结果")
+        else:
+            raise ValueError("无法识别映射文件格式")
         合法标签集合 = set(ENTITY_TYPE_LABELS.values()) | {t for _, t in ORG_SUFFIX_RULES} | {"机构", "实体"}
         for 代号 in self._反向:
             匹配 = self.映射表代号模式.match(代号)
@@ -280,7 +336,10 @@ class 全局映射表:
 
     def 保存到文件(self, 路径: str | Path) -> None:
         Path(路径).write_text(
-            json.dumps(self._正向, ensure_ascii=False, indent=2),
+            json.dumps({"version": 2, "正向": self._正向, "反向": self._反向,
+                        "机构": self._机构, "计数器": self._计数器,
+                        "保留代号": sorted(self._保留代号), "歧义原词": sorted(self._歧义原词),
+                        "文件记录": self.文件记录}, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
 
@@ -406,6 +465,22 @@ class NER引擎:
     def _获取api地址(self) -> str:
         配置 = self._读取llm配置()
         return f"{配置['api_base']}/chat/completions"
+
+    def _请求文档模型(self, 消息, 最大输出=8192):
+        from 主程序.文档识别 import 请求模型
+        return 请求模型(self, 消息, 最大输出)
+
+    def _解析文档返回(self, 消息, 块列表, 机构资料=None, 全文块=None):
+        from 主程序.文档识别 import 解析返回
+        return 解析返回(self, 消息, 块列表, 机构资料, 全文块)
+
+    def 识别文档(self, 块列表, 进度回调=None):
+        from 主程序.文档识别 import 识别文档
+        return 识别文档(self, 块列表, 进度回调)
+
+    def 复查输出(self, 输出块, 原块, 已有机构, 进度回调=None):
+        from 主程序.文档识别 import 复查输出
+        return 复查输出(self, 输出块, 原块, 已有机构, 进度回调)
 
     NER_PROMPT = """你是中文命名实体识别程序，不是聊天助手。
 
@@ -1175,9 +1250,12 @@ class NER引擎:
                 旧代号 = 映射._正向[简称]
                 if 旧代号 == 主代号:
                     continue
-                合并数 += 映射.合并代号(旧代号, 主代号)
+                # 保留已经生成的旧代号反向记录，只调整后续写回的称呼代号。
+                映射._正向.pop(简称)
+                映射.注册自定义映射(简称, 主代号)
+                合并数 += 1
             else:
-                映射.注册自定义映射(简称, 主代号, 允许共用=True)
+                映射.注册自定义映射(简称, 主代号)
                 合并数 += 1
         return 合并数
 
@@ -1206,195 +1284,14 @@ class NER引擎:
 
     def 文本脱敏(self, 文本: str, 映射: 全局映射表, 进度回调=None,
                  启用日期: bool = True, 启用月日: bool = False, 启用金额: bool = False) -> str:
-        if 进度回调:
-            进度回调(-1, -1, "NER 开始")
-        实体列表 = self.识别实体(文本, 进度回调=进度回调)
-        llm已工作 = self._可用 is True
-        # LLM已产出实体时，正则无权插手实体识别，仅做结构化脱敏
-        llm已产出实体 = llm已工作 and len(实体列表) > 0
-        _ner人名 = sum(1 for _, t in 实体列表 if t == "Nh")
-        _ner地址 = sum(1 for _, t in 实体列表 if t == "Ns")
-        _ner机构 = sum(1 for _, t in 实体列表 if t == "Ni")
-        if 进度回调:
-            _msg = f"NER发现: 人名{_ner人名} 地址{_ner地址} 机构{_ner机构}，注册映射实体"
-            进度回调(-1, -1, _msg)
-        实体列表.sort(key=lambda x: len(x[0]), reverse=True)
-        新地址实体: list[str] = []
-        for 原文, 实体类型 in 实体列表:
-            if 原文 in 映射.正向映射:
-                continue
-            父实体 = self._查找父实体(原文, 映射.正向映射)
-            if 父实体:
-                映射.注册自定义映射(原文, 映射._正向[父实体])
-            else:
-                if 实体类型 == "Ni":
-                    子类型 = 判断机构子类型(原文)
-                    映射.查找或创建(原文, 子类型)
-                else:
-                    映射.查找或创建(原文, 实体类型)
-            if 实体类型 == "Ns":
-                新地址实体.append(原文)
-
-        # 从已确认实体生成脱壳简称（与正则发现互补，不依赖后缀匹配）
-        # 分两轮：第一轮洗法律后缀/地名标记，第二轮仅对公司类洗行业词
-        # 用注册自定义映射为每个简称分配独有代号（带圈数字序号），保留还原能力
-        _脱壳计数 = 0
-        for 原文 in list(映射.正向映射.keys()):
-            代号 = 映射._正向[原文]
-            # 第一轮：洗掉法律后缀 + 地名标记
-            简称 = self._清洗实体名(原文)
-            if 简称 != 原文 and len(简称) >= 2 and 简称 not in 映射.正向映射:
-                映射.注册自定义映射(简称, 代号)
-                _脱壳计数 += 1
-            # 第二轮（仅公司类）：再洗一次行业词，露出核心品牌名
-            if 代号.startswith('[公司') or 代号.startswith('[合伙'):
-                核心 = self._洗行业词(简称)
-                if 核心 != 简称 and len(核心) >= 2 and 核心 not in 映射.正向映射:
-                    映射.注册自定义映射(核心, 代号)
-                    _脱壳计数 += 1
-        if _脱壳计数 and 进度回调:
-            进度回调(-1, -1, f"实体脱壳生成{_脱壳计数}个简称")
-
-        # 正则兜底：仅在LLM未产出实体时启用
-        if not llm已产出实体:
-            规则机构 = self._规则识别明显机构(文本)
-            _规则新增 = 0
-            if 规则机构:
-                for 机构名, 实体类型 in 规则机构:
-                    if 机构名 in 映射.正向映射:
-                        continue
-                    # 脏上下文过滤：正则匹配到了包含已有实体的更长文本（如整句），跳过
-                    if any(已有 in 机构名 for 已有 in 映射.正向映射 if len(已有) >= 4):
-                        continue
-                    父实体 = self._查找父实体(机构名, 映射.正向映射)
-                    if 父实体:
-                        映射.注册自定义映射(机构名, 映射._正向[父实体])
-                        _规则新增 += 1
-                    elif not llm已工作:
-                        # LLM没工作，正则独立兜底，可以信任
-                        子类型 = 判断机构子类型(机构名)
-                        映射.查找或创建(机构名, 子类型)
-                        _规则新增 += 1
-                    # LLM已工作且既非脏匹配也非子实体：跳过，不信任纯正则发现
-            if 进度回调 and 规则机构:
-                进度回调(-1, -1, f"规则兜底: {len(规则机构)}候选, 实际新增{_规则新增}个")
-        elif 进度回调:
-            进度回调(-1, -1, "NER已产出实体，跳过正则兜底")
-        if 进度回调 and 新地址实体:
-            进度回调(-1, -1, "注册地址片段")
-        for 地址原文 in 新地址实体:
-            if 地址原文 not in 映射.正向映射:
-                continue
-            代号 = 映射.正向映射[地址原文]
-            for 片段 in self._生成地址片段(地址原文):
-                if 片段 not in 映射.正向映射:
-                    映射.注册自定义映射(片段, 代号)
-        if 进度回调:
-            进度回调(-1, -1, "匹配正则模式")
-        匹配列表 = [
-            (BANK_ACCOUNT_PATTERN, "bank_account"),
-            (CREDIT_CODE_PATTERN, "credit_code"),
-            (MOBILE_PHONE_PATTERN, "mobile_phone"),
-            (LANDLINE_PATTERN, "landline"),
-            (ID_CARD_PATTERN, "id_card"),
-            (EMAIL_PATTERN, "email"),
-            (PLATE_NUMBER_PATTERN, "plate_number"),
-            (IPV4_PATTERN, "ip_address"),
-            (MAC_ADDRESS_PATTERN, "mac_address"),
-        ]
-        for 模式, 类型标签 in 匹配列表:
-            for 匹配 in 模式.finditer(文本):
-                候选 = 匹配.group()
-                if 类型标签 == "credit_code" and 候选.isdigit():
-                    continue
-                映射.查找或创建(候选, 类型标签)
-        if 启用金额:
-            if 进度回调:
-                进度回调(-1, -1, "处理金额")
-            for 匹配 in AMOUNT_PATTERN.finditer(文本):
-                数字部分 = 匹配.group(1)
-                单位 = 匹配.group(2)
-                原始匹配串 = 匹配.group(0)
-                模糊值 = _模糊化金额(原始匹配串, 数字部分, 单位)
-                if 模糊值:
-                    映射.注册自定义映射(原始匹配串, 模糊值)
-            for 匹配 in AMOUNT_NO_UNIT_PATTERN.finditer(文本):
-                数字部分 = 匹配.group(1)
-                模糊值 = _模糊化金额(数字部分, 数字部分, "元")
-                if 模糊值:
-                    映射.注册自定义映射(数字部分, 模糊值)
-        # 简称候选发现：父实体自动注册始终执行（子串匹配安全），
-        # LLM审核仅在正则兜底模式（LLM未产出实体）时启用
-        if 进度回调:
-            进度回调(-1, -1, "发现简称候选")
-        简称候选 = self._发现简称候选(文本, 映射.正向映射)
-        待审核列表: list[str] = []
-        自动注册计数 = 0
-        for 候选名 in 简称候选:
-            父实体 = self._查找父实体(候选名, 映射.正向映射)
-            if 父实体:
-                映射.注册自定义映射(候选名, 映射._正向[父实体])
-                自动注册计数 += 1
-            else:
-                待审核列表.append(候选名)
-        if 自动注册计数 and 进度回调:
-            进度回调(-1, -1, f"简称 自动注册{自动注册计数}个，待LLM审核{len(待审核列表)}个")
-        强制审核简称 = False
-        try:
-            from .mineru桥接 import 读取用户设置
-        except ImportError:
-            from mineru桥接 import 读取用户设置
-        try:
-            _设置 = 读取用户设置()
-            强制审核简称 = _设置.get("force_abbr_audit") is True
-        except Exception:
-            强制审核简称 = False
-
-        if (强制审核简称 or not llm已产出实体) and 待审核列表:
-            # 正则兜底模式：送LLM审核未知简称
-            通过审核: list[str] = []
-            批次大小 = 50
-            总批次 = (len(待审核列表) + 批次大小 - 1) // 批次大小
-            for 批次序号, 批次起点 in enumerate(range(0, len(待审核列表), 批次大小), 1):
-                批次 = 待审核列表[批次起点:批次起点 + 批次大小]
-                if 进度回调:
-                    进度回调(-1, -1, f"LLM审核简称 {批次序号}/{总批次}")
-                通过审核.extend(self._审核简称候选(批次))
-            for 候选名 in 通过审核:
-                if 候选名 in 映射.正向映射:
-                    continue
-                子类型 = 判断机构子类型(候选名)
-                映射.查找或创建(候选名, 子类型)
-        elif llm已产出实体 and 待审核列表 and 进度回调:
-            进度回调(-1, -1, f"跳过{len(待审核列表)}个未知简称的LLM审核（NER已产出实体，未开启强力审核）")
-
-        # 简称声明合并：所有识别来源登记完毕后统一执行，确保"××（以下简称"××"）"指向同一代号
-        声明合并数 = self._合并简称声明(文本, 映射)
-        if 声明合并数 and 进度回调:
-            进度回调(-1, -1, f"简称声明合并{声明合并数}处")
-
-        机构标签集合 = {"公司", "机关", "事业单位", "协会", "机构", "合伙企业"}
-        映射中机构数 = sum(
-            1 for 代号 in 映射.正向映射.values()
-            if any(tag in 代号 for tag in 机构标签集合)
-        )
-        if 映射中机构数 == 0:
-            再次检查 = self._规则识别明显机构(文本)
-            if 再次检查:
-                import sys
-                msg = "质量闸门：单位识别完全失败。映射表0个机构项，但原文中存在明显单位名称。请检查LM Studio或更换模型。"
-                print(f"[质量闸门] {msg}", file=sys.stderr)
-                if 进度回调:
-                    进度回调(-1, -1, f"[质量闸门] 单位识别完全失败！")
-                raise RuntimeError(msg)
-
-        if 启用日期:
-            if 进度回调:
-                进度回调(-1, -1, "脱敏日期")
-            self._脱敏日期(文本, 映射, 启用月日=启用月日)
-        if 进度回调:
-            进度回调(-1, -1, "AC自动机替换")
-        return 映射.批量替换文本(文本)
+        from 主程序.识别结果 import 文本块, 按位置替换
+        from 主程序.固定规则 import 固定规则识别
+        from 主程序.定位写回 import 准备替换
+        块 = 文本块("text:0",文本,{})
+        检出 = self.识别文档([块],进度回调)
+        检出.出现.extend(固定规则识别(块,启用日期,启用月日,启用金额))
+        self.最近识别结果 = 检出
+        return 按位置替换(文本,准备替换([块],检出,映射).get(块.编号,[]))
 
     def _脱敏日期(self, 文本: str, 映射: 全局映射表, 启用月日: bool = False) -> None:
         已处理 = set()

@@ -18,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from 主程序.ner引擎 import 全局映射表, NER引擎
 from 主程序.格式保持器 import 生成脱敏md
 from 主程序.脱敏处理器 import 脱敏处理器
+from 主程序.识别结果 import 识别结果
 
 
 class Test映射碰撞兜底(unittest.TestCase):
@@ -62,6 +63,11 @@ class Test生成脱敏md传入文本(unittest.TestCase):
 class Test调试日志开关(unittest.TestCase):
     """调试日志默认关闭；开启后即使处理抛异常也必须关闭文件句柄"""
 
+    def setUp(self):
+        复查 = patch.object(NER引擎, '复查输出', return_value=识别结果())
+        复查.start()
+        self.addCleanup(复查.stop)
+
     def _造txt(self, 目录: str) -> str:
         p = Path(目录) / "a.txt"
         p.write_text("张三签署合同", encoding="utf-8")
@@ -71,7 +77,7 @@ class Test调试日志开关(unittest.TestCase):
         with tempfile.TemporaryDirectory() as 目录:
             文件 = self._造txt(目录)
             处理器 = 脱敏处理器()
-            with patch.object(处理器._ner, "文本脱敏", return_value=""):
+            with patch.object(处理器._ner, "识别文档", return_value=识别结果()):
                 处理器.处理文件列表([文件], 目录)
             日志文件 = list(Path(目录).glob("*_NER调试.log"))
             self.assertEqual(日志文件, [], "默认不应生成 NER 调试日志")
@@ -81,7 +87,7 @@ class Test调试日志开关(unittest.TestCase):
             文件 = self._造txt(目录)
             处理器 = 脱敏处理器()
             with patch("主程序.脱敏处理器.读取用户设置", return_value={"debug_ner_log": True}), \
-                 patch.object(处理器._ner, "文本脱敏", return_value=""):
+                 patch.object(处理器._ner, "识别文档", return_value=识别结果()):
                 处理器.处理文件列表([文件], 目录)
             日志文件 = list(Path(目录).glob("*_NER调试.log"))
             self.assertEqual(len(日志文件), 1)
@@ -92,9 +98,11 @@ class Test调试日志开关(unittest.TestCase):
             文件 = self._造txt(目录)
             处理器 = 脱敏处理器()
             with patch("主程序.脱敏处理器.读取用户设置", return_value={"debug_ner_log": True}), \
-                 patch.object(处理器._ner, "文本脱敏", side_effect=RuntimeError("质量闸门")):
+                 patch.object(处理器._ner, "识别文档", side_effect=RuntimeError("模型返回错误")):
                 结果 = 处理器.处理文件列表([文件], 目录)
-            self.assertEqual(结果.失败数, 1)
+            self.assertEqual(结果.失败数, 0)
+            self.assertEqual(len(结果.已生成文件), 1)
+            self.assertTrue(结果.未完成环节)
             self.assertIsNone(NER引擎._调试日志文件, "异常时调试日志句柄未关闭")
 
 

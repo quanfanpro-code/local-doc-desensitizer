@@ -1,53 +1,27 @@
-"""验证简称同义词映射：子串实体映射到相同代号"""
-from __future__ import annotations
-import sys
-sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
-
+"""机构关系相同仍逐字还原，独立的母公司不随子串自动合并。"""
+import unittest
+from unittest.mock import patch
 from 主程序.ner引擎 import 全局映射表, NER引擎
+from 主程序.识别结果 import 识别结果, 出现记录
 
-映射 = 全局映射表()
 
-# 直接模拟NER识别后的注册逻辑（不调LM Studio）
-模拟实体 = [
-    ("四川和邦生物科技股份有限公司", "Ni"),
-    ("和邦生物", "Ni"),              # 简称，是上述的子串
-    ("和邦集团", "Ni"),              # 独立实体
-]
+class 简称兼容测试(unittest.TestCase):
+    def test_显式简称登记保留原写法(self):
+        m = 全局映射表()
+        m.查找或创建("成都禾舟科技有限公司","公司")
+        NER引擎()._合并简称声明('成都禾舟科技有限公司（以下简称“禾舟”）',m)
+        self.assertNotEqual(m.正向映射["成都禾舟科技有限公司"],m.正向映射["禾舟"])
+        self.assertEqual(m.批量还原文本(m.正向映射["禾舟"]),"禾舟")
 
-# 手动执行注册逻辑（模拟 text_脱敏 中的注册部分）
-模拟实体.sort(key=lambda x: len(x[0]), reverse=True)
-for 原文, 实体类型 in 模拟实体:
-    if 原文 in 映射.正向映射:
-        continue
-    父实体 = NER引擎._查找父实体(原文, 映射.正向映射)
-    if 父实体:
-        映射._正向[原文] = 映射._正向[父实体]
-        映射._版本 += 1
-    else:
-        if 实体类型 == "Ni":
-            from 主程序.ner引擎 import 判断机构子类型
-            子类型 = 判断机构子类型(原文)
-            映射.查找或创建(原文, 子类型)
-        else:
-            映射.查找或创建(原文, 实体类型)
-
-print("=== 映射表 ===")
-for 原文, 代号 in sorted(映射.正向映射.items(), key=lambda x: len(x[0]), reverse=True):
-    print(f"  {代号} ← {原文}")
-
-文本 = "四川和邦生物科技股份有限公司（以下简称'和邦生物'）由和邦集团控股。"
-替换后 = 映射.批量替换文本(文本)
-print(f"原文:   {文本}")
-print(f"替换后: {替换后}")
-
-# 验证
-assert '和邦生物' not in 替换后, f'简称"和邦生物"未被替换！输出="{替换后}"'
-assert '和邦集团' not in 替换后, f'"和邦集团"未被替换！输出="{替换后}"'
-assert '四川和邦生物科技股份有限公司' not in 替换后, f'全称未被替换！输出="{替换后}"'
-# 验证两个简称用了相同代号
-代号集合 = set()
-for 原文 in ["四川和邦生物科技股份有限公司", "和邦生物"]:
-    代号集合.add(映射.正向映射[原文])
-assert len(代号集合) == 1, f'全称和简称应使用相同代号，实际={代号集合}'
-print()
-print("[OK] 全部验证通过：简称和全称均被正确替换，且使用相同代号")
+    def test_文本接口使用位置且母子主体分离(self):
+        text = "禾舟集团与禾舟科技签约，禾舟为诗中用语。"
+        result = 识别结果(机构={"母":{"canonical":None,"names":["禾舟集团"]},
+            "子":{"canonical":None,"names":["禾舟科技"]}},出现=[
+            出现记录("text:0",0,4,"禾舟集团","Ni","母"),
+            出现记录("text:0",5,9,"禾舟科技","Ni","子")])
+        m = 全局映射表(); engine = NER引擎()
+        with patch.object(engine,"识别文档",return_value=result):
+            masked = engine.文本脱敏(text,m)
+        self.assertIn("禾舟为诗中用语",masked)
+        self.assertNotEqual(m._机构["母"]["主代号"],m._机构["子"]["主代号"])
+        self.assertEqual(m.批量还原文本(masked),text)

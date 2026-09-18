@@ -82,6 +82,11 @@ class Test构造白名单(unittest.TestCase):
 class Test识别实体跨块状态(unittest.TestCase):
     """识别实体：单次调用内累积，多次调用间状态隔离"""
 
+    def setUp(self):
+        探测 = patch.object(NER引擎, '_检测lm可用性', return_value=True)
+        探测.start()
+        self.addCleanup(探测.stop)
+
     def test_跨块复用第二块收到第一块实体(self):
         """第 2 块调用 LLM 时，prompt 中应包含第 1 块的已识别实体"""
         引擎 = NER引擎()

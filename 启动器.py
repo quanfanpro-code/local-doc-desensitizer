@@ -11,7 +11,7 @@ CURRENT_DIR = Path(__file__).resolve().parent
 
 def 检查依赖() -> list[str]:
     缺失列表 = []
-    for 模块名 in ["customtkinter", "docx", "openpyxl", "pptx", "fitz", "ahocorasick", "requests"]:
+    for 模块名 in ["customtkinter", "docx", "openpyxl", "pptx", "fitz", "ahocorasick", "requests", "phonenumbers", "win32com.client"]:
         try:
             importlib.import_module(模块名)
         except ImportError:

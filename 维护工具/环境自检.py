@@ -29,6 +29,8 @@ def 运行自检() -> bool:
         ("pptx", "PPT文档解析（python-pptx）"),
         ("fitz", "PDF解析（PyMuPDF）"),
         ("requests", "HTTP请求"),
+        ("phonenumbers", "电话号码识别"),
+        ("win32com.client", "Windows Office公式读取"),
     ]
 
     print("\n依赖检查：")
