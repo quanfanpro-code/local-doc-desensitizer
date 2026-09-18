@@ -324,11 +324,15 @@ def 请求模型(引擎, 消息, 最大输出=8192):
         if getattr(引擎, "_取消检查", lambda: False)():
             raise InterruptedError("用户取消")
         开始 = time.monotonic()
+        # vLLM 的 enable_thinking 开关不是 OpenAI 标准参数；
+        # 已确认后端不支持（见下方 400 处理）后，同一引擎后续请求不再附带
+        负载 = {"model": 模型, "messages": 消息,
+            "temperature": 0, "max_tokens": 最大输出}
+        if not getattr(引擎, "_扩展参数被拒", False):
+            负载["chat_template_kwargs"] = {"enable_thinking": False}
         try:
             r = requests.post(配置["api_base"].rstrip("/") + "/chat/completions",
-                headers=headers, json={"model": 模型, "messages": 消息,
-                "temperature": 0, "max_tokens": 最大输出,
-                "chat_template_kwargs": {"enable_thinking": False}}, timeout=(15, 240))
+                headers=headers, json=负载, timeout=(15, 240))
             r.raise_for_status()
             数据 = r.json()
             选择 = 数据["choices"][0]
@@ -342,6 +346,12 @@ def 请求模型(引擎, 消息, 最大输出=8192):
             if 次数 == 2:
                 raise
         except requests.HTTPError as exc:
+            # 仅当响应明确指出扩展参数不受支持时，去掉该参数再试一次，
+            # 并在引擎上记忆，后续请求直接不带；其余 400 原样抛出，不盲目重试
+            if (r.status_code == 400 and "chat_template_kwargs" in (r.text or "")
+                    and "chat_template_kwargs" in 负载):
+                引擎._扩展参数被拒 = True
+                continue
             if r.status_code not in {408, 429, 500, 502, 503, 504} or 次数 == 2:
                 raise exc
         time.sleep(0.25 * (次数 + 1))

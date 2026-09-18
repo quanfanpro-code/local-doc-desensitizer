@@ -28,13 +28,17 @@ class 脱敏处理结果:
 
 
 class 脱敏处理器:
-    def __init__(self, ocr引擎=None, 启用日期: bool = True, 启用月日: bool = False, 启用金额: bool = False) -> None:
+    def __init__(self, ocr引擎=None, 启用日期: bool = True, 启用月日: bool = False,
+                 启用金额: bool = False, 跳过模型: bool = False) -> None:
         self._ner = NER引擎()
         self._ocr = ocr引擎 or 默认ocr引擎
         self._取消标记 = False
         self.启用日期 = 启用日期
         self.启用月日 = 启用月日
         self.启用金额 = 启用金额
+        # 用户在 LLM 未就绪时选择“仅使用正则”后，整个处理流程不再调用模型识别，
+        # 避免对着不可用的模型空转重试；人名/地名/机构名随之跳过
+        self.跳过模型 = 跳过模型
 
     def 请求取消(self) -> None:
         self._取消标记 = True
@@ -97,16 +101,19 @@ class 脱敏处理器:
                 if 扫描输出:
                     文本 = self._提取文本自动处理(文件路径, 进度回调)
                     块 = [文本块(f"text:{i}",行,{"行":i}) for i,行 in enumerate(文本.splitlines(keepends=True))]
-                if 读取用户设置().get("debug_ner_log"):
-                    日志路径 = 目标目录 / f"{名称}_NER调试.log"
-                    备份已有输出(日志路径)
-                    NER引擎.启用调试日志(str(日志路径))
-                try:
-                    检出 = self._ner.识别文档(块, 模型进度)
-                except Exception as exc:
-                    检出 = 识别结果(未完成=[{"环节":"机构识别","原因":str(exc) or type(exc).__name__}])
-                finally:
-                    NER引擎.关闭调试日志()
+                if self.跳过模型:
+                    检出 = 识别结果()
+                else:
+                    if 读取用户设置().get("debug_ner_log"):
+                        日志路径 = 目标目录 / f"{名称}_NER调试.log"
+                        备份已有输出(日志路径)
+                        NER引擎.启用调试日志(str(日志路径))
+                    try:
+                        检出 = self._ner.识别文档(块, 模型进度)
+                    except Exception as exc:
+                        检出 = 识别结果(未完成=[{"环节":"机构识别","原因":str(exc) or type(exc).__name__}])
+                    finally:
+                        NER引擎.关闭调试日志()
                 for b in 块:
                     检出.出现.extend(固定规则识别(b,self.启用日期,self.启用月日,self.启用金额))
                     if b.位置.get("公式复算未完成"):
@@ -126,7 +133,10 @@ class 脱敏处理器:
                 try:
                     输出块 = 读取文档块(输出路径, Excel会话=Excel会话)
                     原替换 = 准备替换(块,检出,映射)
-                    复查 = self._ner.复查输出(输出块,块,检出.机构,模型进度)
+                    if self.跳过模型:
+                        复查 = 识别结果()
+                    else:
+                        复查 = self._ner.复查输出(输出块,块,检出.机构,模型进度)
                     for b in 输出块:
                         复查.出现.extend(固定规则识别(b,self.启用日期,self.启用月日,self.启用金额))
                     检出.机构.update(复查.机构)
@@ -268,6 +278,9 @@ class 脱敏处理器:
     def 检查扫描版pdf(self, 文件路径列表: list[str]) -> list[str]:
         扫描版列表: list[str] = []
         for 文件路径 in 文件路径列表:
+            # 预检也可能耗时（要逐个打开 PDF），用户在等待期间取消必须立即生效
+            if self._取消标记:
+                break
             if Path(文件路径).suffix.lower() == ".pdf":
                 try:
                     if 判断是否扫描版pdf(文件路径):

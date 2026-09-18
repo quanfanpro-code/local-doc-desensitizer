@@ -111,41 +111,6 @@ class TestNER引擎辅助方法(unittest.TestCase):
         ]
         self.assertEqual(选择首选文本模型(模型列表), "")
 
-    def test_提取消息文本_兼容推理字段(self):
-        消息 = {
-            "content": "",
-            "reasoning_content": "思考后输出：[{\"name\": \"张三\", \"type\": \"PERSON\"}]",
-        }
-        文本 = NER引擎._提取消息文本(消息)
-        self.assertIn("张三", 文本)
-        self.assertEqual(
-            NER引擎._提取json(文本),
-            "[{\"name\": \"张三\", \"type\": \"PERSON\"}]",
-        )
-
-    def test_提取消息文本_兼容内容列表(self):
-        消息 = {
-            "content": [
-                {"type": "text", "text": "[{\"name\": \"北京\", \"type\": \"LOCATION\"}]"}
-            ]
-        }
-        文本 = NER引擎._提取消息文本(消息)
-        self.assertEqual(
-            NER引擎._提取json(文本),
-            "[{\"name\": \"北京\", \"type\": \"LOCATION\"}]",
-        )
-
-    def test_提取消息文本_正式内容优先于推理内容(self):
-        消息 = {
-            "content": "[{\"name\": \"和邦生物\", \"type\": \"ORGANIZATION\"}]",
-            "reasoning_content": "推理过程里还有别的数组：[1, 2, 3]",
-        }
-        文本 = NER引擎._提取消息文本(消息)
-        self.assertEqual(
-            NER引擎._提取json(文本),
-            "[{\"name\": \"和邦生物\", \"type\": \"ORGANIZATION\"}]",
-        )
-
     def test_检测lm可用性_没有已加载文本模型时返回假(self):
         引擎 = NER引擎()
         with patch("主程序.mineru桥接.读取用户设置", return_value={"llm_mode": "local", "lm_port": 1234}):

@@ -271,11 +271,20 @@ def 读取文档块(文件路径: str, Excel会话=None):
                     值 = 显示[cell.coordinate]
                     return _excel单元格转文本(cell.value if 值 is None else 值)
                 表头 = " | ".join(文本(c) for c in 格 if c.row <= 3)
+                # 每列自己的字段提示（前三行同列文字），供固定规则按列归属判断，
+                # 避免整行/整表头里其他列的字段名干扰当前格
+                列字段 = {}
+                for c in 格:
+                    if c.row <= 3:
+                        列字段.setdefault(c.column, []).append((c.row, 文本(c)))
                 for _, 行组 in groupby(格, key=lambda c: c.row):
                     row = list(行组)
                     行上下文 = " | ".join(文本(c) for c in row)
                     for cell in row:
-                        位置 = {"工作表": sheet.title, "单元格": cell.coordinate}
+                        # 只取当前格上方（同列、前三行内）的字段文字，避免把当前格自己算进去
+                        位置 = {"工作表": sheet.title, "单元格": cell.coordinate,
+                                "列字段": " ".join(t for r, t in sorted(列字段.get(cell.column, []))
+                                                   if r < cell.row)}
                         值 = 显示[cell.coordinate]
                         if cell.data_type == "f":
                             if (sheet.title,cell.coordinate) not in 计算值:

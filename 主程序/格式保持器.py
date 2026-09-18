@@ -279,10 +279,12 @@ def _既有映射PDF(路径, 项目, 输出路径):
                 for rect in page.search_for(原词):
                     if any((rect & r).get_area() > 0 for r in 已占):
                         continue
-                    page.add_redact_annot(rect,fill=(1,1,1))
+                    # fill=False 不做填充：删除文字后显露原背景，不用白块遮挡图片/线条/底色
+                    page.add_redact_annot(rect,fill=False)
                     已占.append(rect)
                     写入.append((page.number,rect,替换))
-            page.apply_redactions(graphics=0)
+            # images 默认会涂白重叠图片像素，必须显式保留；graphics=0 保留矢量线条
+            page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,graphics=0)
         for 页,rect,text in 写入:
             _PDF插入(doc[页],rect,text,10)
         备份已有输出(输出路径)

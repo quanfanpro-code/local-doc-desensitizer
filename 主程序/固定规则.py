@@ -92,6 +92,10 @@ def 固定规则识别(块, 启用日期=False, 启用月日=False, 启用金额
             来源="规则（校验异常，字段明确）" if 异常 else "规则")))
     def 标签(s, 模式):
         前文 = re.split(r"[；;。\n]", 文本[max(0,s-45):s])[-1]
+        # Excel 单元格按列归属：只搜当前列的字段提示，
+        # 不让整行/整表头里其他列的字段名干扰当前格；非 Excel 块维持原行为
+        if "列字段" in 块.位置:
+            return bool(re.search(模式, 前文 + " " + 块.位置["列字段"], re.I))
         return bool(re.search(模式, 前文 + " " + 块.上下文, re.I))
     for m in re.finditer(r"(?<![0-9A-Za-z])[0-9A-Za-z]{18}(?![0-9A-Za-z])",文本):
         v = m.group().upper()

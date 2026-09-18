@@ -75,8 +75,25 @@ def 选择首选文本模型(模型列表: list[dict]) -> str:
     return ""
 
 
+def _分类探测错误(exc: Exception) -> str:
+    """把探测异常分类成用户能看懂的原因，供界面分类提示"""
+    import requests
+    if isinstance(exc, requests.HTTPError):
+        码 = getattr(getattr(exc, "response", None), "status_code", None)
+        if 码 in (401, 403):
+            return f"API 密钥无效或无权限（HTTP {码}），请检查密钥"
+        if 码 == 404:
+            return "API 地址不存在（HTTP 404），请检查地址是否填对"
+        return f"服务返回错误（HTTP {码 or '未知'}）"
+    if isinstance(exc, requests.Timeout):
+        return "连接超时，请检查网络或稍后重试"
+    if isinstance(exc, requests.ConnectionError):
+        return "无法连接，请检查服务是否启动、地址是否正确"
+    return str(exc) or type(exc).__name__
+
+
 def 探测lm_studio状态() -> dict:
-    结果 = {"已启动": False, "模型名称": "", "模型已加载": False}
+    结果 = {"已启动": False, "模型名称": "", "模型已加载": False, "错误原因": ""}
     try:
         模型列表 = 获取lm_studio模型列表()
         结果["已启动"] = True
@@ -84,8 +101,8 @@ def 探测lm_studio状态() -> dict:
         if 模型名称:
             结果["模型已加载"] = True
             结果["模型名称"] = 模型名称
-    except Exception:
-        pass
+    except Exception as exc:
+        结果["错误原因"] = _分类探测错误(exc)
     return 结果
 
 
@@ -135,9 +152,9 @@ def 获取在线api模型列表(api_base: str, api_key: str) -> list[dict]:
 def 探测在线api状态(api_base: str, api_key: str, model: str = "") -> dict:
     """检测在线 API 连通性，返回格式与 探测lm_studio状态() 对齐。
 
-    返回：{"已启动": bool, "模型名称": str, "模型已加载": bool}
+    返回：{"已启动": bool, "模型名称": str, "模型已加载": bool, "错误原因": str}
     """
-    结果 = {"已启动": False, "模型名称": "", "模型已加载": False}
+    结果 = {"已启动": False, "模型名称": "", "模型已加载": False, "错误原因": ""}
     try:
         模型列表 = 获取在线api模型列表(api_base, api_key)
         结果["已启动"] = True
@@ -169,16 +186,17 @@ def 探测在线api状态(api_base: str, api_key: str, model: str = "") -> dict:
                     )
                     _冒烟.raise_for_status()
                     结果["模型已加载"] = True
-                except Exception:
+                except Exception as exc:
                     结果["模型已加载"] = False
+                    结果["错误原因"] = "模型冒烟测试失败：" + _分类探测错误(exc)
         else:
             if 模型列表:
                 第一个 = str(模型列表[0].get("id") or "")
                 if 第一个:
                     结果["模型已加载"] = True
                     结果["模型名称"] = 第一个
-    except Exception:
-        pass
+    except Exception as exc:
+        结果["错误原因"] = _分类探测错误(exc)
     return 结果
 
 

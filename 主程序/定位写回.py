@@ -196,12 +196,14 @@ def 保存(原路径, 块列表, 结果, 映射, 输出路径):
                     for rect in b.位置["字符框"][s+1:e]:
                         框 |= pymupdf.Rect(rect)
                     page = doc[b.位置["页"]]
-                    page.add_redact_annot(框,fill=(1,1,1))
+                    # fill=False 不做填充：删除文字后显露原背景，不用白块遮挡图片/线条/底色
+                    page.add_redact_annot(框,fill=False)
                     待写.append({"格式":后缀,"块编号":f"{b.编号}:{s}",
                         "页":page.number,"矩形":list(框),"原文":b.原文[s:e],"输出值":代号,
                         "字号":b.位置.get("字号",10)})
             for page in doc:
-                page.apply_redactions(graphics=0)
+                # images 默认会涂白重叠图片像素，必须显式保留；graphics=0 保留矢量线条
+                page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,graphics=0)
             for r in 待写:
                 _PDF插入(doc[r["页"]],r["矩形"],r["输出值"],r["字号"])
             doc.save(输出路径,garbage=4,deflate=True)
@@ -223,9 +225,9 @@ def 还原(文件路径, 映射, 输出路径):
                 区域文字 = "".join(page.get_textbox(pymupdf.Rect(r["矩形"])).split())
                 if "".join(r["输出值"].split()) not in 区域文字:
                     raise ValueError("PDF中的代号与还原映射不一致")
-                page.add_redact_annot(r["矩形"],fill=(1,1,1))
+                page.add_redact_annot(r["矩形"],fill=False)
             for page in doc:
-                page.apply_redactions(graphics=0)
+                page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,graphics=0)
             for r in 记录.values():
                 _PDF插入(doc[r["页"]],r["矩形"],r["原文"],r["字号"])
             备份已有输出(输出路径)

@@ -1,14 +1,16 @@
 """NER 引擎在线模式单元测试
 
-测试 ner引擎.py 的改造：
-- _读取llm配置：根据 llm_mode 返回本地/在线配置
-- _调用llm：在线模式请求头带 Authorization，本地模式不带
+测试 ner引擎.py 当前仍使用的配置读取：
+- _读取llm配置：根据 llm_mode 返回本地/在线配置，地址规范化到 /v1
+
+（旧 _调用llm 请求头的两项测试已随旧识别链路删除；
+鉴权行为迁移到当前请求路径，见 test_扩展参数兼容.py）
 """
 from __future__ import annotations
 
 import sys
 import unittest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).parent.parent))
 
@@ -75,59 +77,6 @@ class Test读取llm配置(unittest.TestCase):
         配置 = 引擎._读取llm配置()
 
         self.assertEqual(配置["api_base"], "http://119.6.186.168:40040/v1")
-
-
-class Test调用llm请求头(unittest.TestCase):
-    """在线模式请求头带 Authorization，本地模式不带"""
-
-    @patch('主程序.mineru桥接.读取用户设置')
-    @patch('requests.post')
-    def test_在线模式带Authorization头(self, mock_post, mock_读取设置):
-        mock_读取设置.return_value = {
-            "llm_mode": "online",
-            "online_api_base": "http://119.6.186.168:40040",
-            "online_api_key": "sk-xxx",
-            "online_model": "Qwen3-32B-0709",
-        }
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]
-        }
-        mock_resp.raise_for_status = MagicMock()
-        mock_post.return_value = mock_resp
-
-        引擎 = NER引擎()
-        引擎._可用 = True
-        引擎._MODEL = "Qwen3-32B-0709"
-        引擎._调用llm("测试文本")
-
-        mock_post.assert_called_once()
-        _, kwargs = mock_post.call_args
-        self.assertIn("headers", kwargs)
-        self.assertIn("Authorization", kwargs["headers"])
-        self.assertEqual(kwargs["headers"]["Authorization"], "Bearer sk-xxx")
-
-    @patch('主程序.mineru桥接.读取用户设置')
-    @patch('requests.post')
-    def test_本地模式不带Authorization头(self, mock_post, mock_读取设置):
-        """本地模式向后兼容：请求头不含 Authorization"""
-        mock_读取设置.return_value = {"llm_mode": "local", "lm_port": 1234}
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": "[]"}, "finish_reason": "stop"}]
-        }
-        mock_resp.raise_for_status = MagicMock()
-        mock_post.return_value = mock_resp
-
-        引擎 = NER引擎()
-        引擎._可用 = True
-        引擎._MODEL = "local-model"
-        引擎._调用llm("测试文本")
-
-        mock_post.assert_called_once()
-        _, kwargs = mock_post.call_args
-        头 = kwargs.get("headers", {})
-        self.assertNotIn("Authorization", 头)
 
 
 if __name__ == "__main__":

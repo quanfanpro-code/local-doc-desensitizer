@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 import threading
 from pathlib import Path
@@ -514,52 +515,142 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
             messagebox.showerror("错误", f"输出目录不存在：{output_dir}")
             return
 
-        files = 收集支持的文件(
-            input_path,
-            包含子文件夹=self.checkbox_subfolders.get() == 1,
-        )
-        if not files:
-            messagebox.showwarning("提示", "没有找到可处理的受支持文件。")
-            return
-
+        # 主线程只做即时校验和取值；收集文件、扫描版检查、LLM 探测这些耗时预检
+        # 全部放到后台线程，界面不卡死，且预检期间点取消必须真正中止、不自动开始处理
         启用日期 = self.checkbox_date.get() == 1
         启用月日 = self.checkbox_date_full.get() == 1 and 启用日期
         启用金额 = self.checkbox_amount.get() == 1
+        包含子文件夹 = self.checkbox_subfolders.get() == 1
+        是在线 = self.settings.get("llm_mode") == "online"
+        if 是在线:
+            api_base = self.online_api_base_var.get().strip()
+            api_key = self.online_api_key_var.get().strip()
+            model = self.online_model_var.get().strip()
+        else:
+            api_base = api_key = model = ""
+
+        self.is_processing = True
+        self.cancel_flag = False
+        self.btn_start_desensitize.configure(state="disabled")
+        self.btn_start_restore.configure(state="disabled")
+        self.btn_cancel.configure(state="normal")
+        self.status_label.configure(text="正在预检文件…")
+        self.append_log("开始预检：收集文件、检查扫描版PDF、探测模型状态……")
+        threading.Thread(
+            target=self._预检并启动脱敏,
+            args=(input_path, output_dir, 包含子文件夹,
+                  启用日期, 启用月日, 启用金额, 是在线, api_base, api_key, model),
+            daemon=True,
+        ).start()
+
+    def _主线程询问(self, 标题: str, 内容: str) -> bool:
+        """在后台线程里弹确认框：送回主线程执行并等待结果"""
+        事件 = threading.Event()
+        结果 = {"答": False}
+
+        def _问():
+            try:
+                结果["答"] = messagebox.askyesno(标题, 内容)
+            finally:
+                事件.set()
+
+        self.after(0, _问)
+        事件.wait()
+        return 结果["答"]
+
+    def _预检并启动脱敏(self, input_path, output_dir, 包含子文件夹,
+                        启用日期, 启用月日, 启用金额, 是在线, api_base, api_key, model):
+        """后台线程：完成全部耗时预检后再启动脱敏；任何阶段被取消都不会开始处理"""
+        前缀 = "在线 API" if 是在线 else "LM Studio"
+
+        def 中止(标题=None, 内容=None, 日志=None, 错误=False):
+            if 标题:
+                弹窗 = messagebox.showerror if 错误 else messagebox.showwarning
+                self.after(0, lambda: 弹窗(标题, 内容))
+            if 日志:
+                self.after(0, self.append_log, 日志)
+            self.after(0, self.reset_ui)
+            return True
+
+        def 已取消():
+            if self.cancel_flag:
+                中止(日志="已取消，未开始处理。")
+                return True
+            return False
+
+        files = 收集支持的文件(input_path, 包含子文件夹=包含子文件夹)
+        if 已取消():
+            return
+        if not files:
+            中止("提示", "没有找到可处理的受支持文件。")
+            return
+
         processor = 脱敏处理器(
             启用日期=启用日期,
             启用月日=启用月日,
             启用金额=启用金额,
         )
-        扫描版列表 = processor.检查扫描版pdf(files)
+        # 尽早挂到 self._processor，取消按钮才能打断正在进行的预检
+        self._processor = processor
 
-        是在线 = self.settings.get("llm_mode") == "online"
+        扫描版列表 = processor.检查扫描版pdf(files)
+        if 已取消():
+            return
+
         try:
             if 是在线:
                 try:
                     from .mineru桥接 import 探测在线api状态
                 except ImportError:
                     from mineru桥接 import 探测在线api状态
-                api_base = self.online_api_base_var.get().strip()
-                api_key = self.online_api_key_var.get().strip()
-                model = self.online_model_var.get().strip()
                 llm_status = 探测在线api状态(api_base, api_key, model)
             else:
                 llm_status = 探测lm_studio状态()
         except Exception as e:
-            messagebox.showerror("探测失败", f"LLM 状态探测失败：\n{e}")
+            中止("探测失败", f"LLM 状态探测失败：\n{e}", 错误=True)
             return
+        if 已取消():
+            return
+
         没有_lm = not (llm_status.get("已启动") and llm_status.get("模型已加载"))
-        前缀 = "在线 API" if 是在线 else "LM Studio"
+        原因 = llm_status.get("错误原因") or ""
 
         if 扫描版列表:
             if 没有_lm:
-                messagebox.showwarning(
+                中止(
                     "扫描版PDF需要LLM",
                     f"检测到 {len(扫描版列表)} 个扫描版PDF文件，但 {前缀} 未就绪。\n"
-                    f"扫描版PDF必须依赖 LLM 处理，请先确保 {前缀} 已启动并可用。",
+                    + (f"原因：{原因}\n" if 原因 else "")
+                    + f"扫描版PDF必须依赖 LLM 处理，请先确保 {前缀} 已启动并可用。",
                 )
                 return
-            self.append_log(f"检测到 {len(扫描版列表)} 个扫描版PDF，{前缀} 已就绪。")
+            self.after(0, self.append_log, f"检测到 {len(扫描版列表)} 个扫描版PDF，{前缀} 已就绪。")
+            # OCR 前置检查：LLM 就绪不代表 OCR 可用。
+            # 注意检查范围：这里只确认 mineru 命令存在，不等于依赖、配置和识别服务全部健康。
+            if not processor._ocr.是否可用():
+                扫描版文件名 = {str(Path(f)) for f in 扫描版列表}
+                其余文件 = [f for f in files if str(Path(f)) not in 扫描版文件名]
+                提示 = (
+                    f"检测到 {len(扫描版列表)} 个扫描版PDF，但 OCR 引擎不可用"
+                    "（未找到 mineru 命令；此处只检查命令是否存在，不代表识别服务一定可用）。\n"
+                )
+                if not 其余文件:
+                    中止("OCR不可用", 提示 + "本批没有其他可处理的文件，未开始处理。", 错误=True)
+                    return
+                # 混合批次不扣住整批：让用户选择跳过扫描件、照常交付其余可用结果
+                if not self._主线程询问(
+                    "OCR不可用",
+                    提示 + f"其余 {len(其余文件)} 个文件不受影响。\n\n是否跳过扫描版PDF，继续处理其余文件？",
+                ):
+                    中止(日志="用户取消，未开始处理。")
+                    return
+                self.after(0, self.append_log,
+                    f"OCR 不可用，已跳过 {len(扫描版列表)} 个扫描版PDF，继续处理其余 {len(其余文件)} 个文件。")
+                files = 其余文件
+                扫描版列表 = []
+            else:
+                self.after(0, self.append_log,
+                    "OCR 预检通过（仅确认 mineru 命令存在，实际识别效果以处理结果为准）。")
 
         if 没有_lm:
             has_ner_files = any(
@@ -568,39 +659,42 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
                 if not Path(f).suffix.lower() == ".pdf"
             )
             if has_ner_files:
-                reply = messagebox.askyesno(
+                reply = self._主线程询问(
                     f"{前缀} 未就绪",
-                    f"{前缀} 未启动或模型未加载。\n\n"
-                    "人名/地名/机构名将无法识别，但其他脱敏规则（手机号、身份证号、金额等）不受影响。\n\n"
+                    f"{前缀} 未启动或模型未加载。\n"
+                    + (f"原因：{原因}\n\n" if 原因 else "\n")
+                    + "人名/地名/机构名将无法识别，但其他脱敏规则（手机号、身份证号、金额等）不受影响。\n\n"
                     "是否继续？（仅使用正则规则脱敏）",
                 )
                 if not reply:
+                    中止(日志="用户取消，未开始处理。")
                     return
-                self.append_log(f"{前缀} 不可用，仅使用正则规则脱敏（人名/地名/机构名将被跳过）。")
+                # 用户的选择必须真正生效：整个处理流程不再调用模型识别
+                processor.跳过模型 = True
+                self.after(0, self.append_log,
+                    f"{前缀} 不可用，仅使用正则规则脱敏（人名/地名/机构名将被跳过）。")
 
-        self.is_processing = True
-        self.cancel_flag = False
-        self._processor = processor
-        self.btn_start_desensitize.configure(state="disabled")
-        self.btn_start_restore.configure(state="disabled")
-        self.btn_cancel.configure(state="normal")
-        self.progressbar.set(0)
-        self.progress_text.configure(text=f"0/{len(files)}")
-        self.status_label.configure(text="正在脱敏处理")
-        self.append_log(f"开始脱敏处理，共 {len(files)} 个文件。")
-        if not 启用日期:
-            self.append_log("注意：日期脱敏已关闭，日期信息不会被处理。")
-        elif not 启用月日:
-            self.append_log("注意：仅遮盖年份，精确月日保持原文。")
-        if not 启用金额:
-            self.append_log("注意：金额脱敏已关闭，金额信息不会被处理。")
-        self.计时标签.configure(text="⏱ 00:00:00")
-        self._启动计时()
-        threading.Thread(
-            target=self.run_desensitize,
-            args=(files, output_dir),
-            daemon=True,
-        ).start()
+        # 启动前最后确认一次：等待期间点了取消就不能又自动开始脱敏
+        if 已取消():
+            return
+
+        def _进入处理界面():
+            self.progressbar.set(0)
+            self.progress_text.configure(text=f"0/{len(files)}")
+            self.status_label.configure(text="正在脱敏处理")
+            self.append_log(f"开始脱敏处理，共 {len(files)} 个文件。")
+            if not 启用日期:
+                self.append_log("注意：日期脱敏已关闭，日期信息不会被处理。")
+            elif not 启用月日:
+                self.append_log("注意：仅遮盖年份，精确月日保持原文。")
+            if not 启用金额:
+                self.append_log("注意：金额脱敏已关闭，金额信息不会被处理。")
+            self.计时标签.configure(text="⏱ 00:00:00")
+            self._启动计时()
+
+        self.after(0, _进入处理界面)
+        # 当前已在后台线程，直接进入处理，无需再开线程
+        self.run_desensitize(files, output_dir)
 
     def start_restore(self):
         if self.is_processing:
@@ -655,12 +749,10 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
 
     def run_desensitize(self, files: list[str], output_dir: str | None):
         processor = self._processor
-        文件总数 = len(files)
 
         def progress_callback(message: str):
             self.after(0, self.append_log, message)
             self.after(0, self.update_status_text, message)
-            import re
             m = re.search(r'\[(\d+)/(\d+)\]', message)
             if m:
                 当前 = int(m.group(1))
@@ -697,7 +789,6 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         def progress_callback(message: str):
             self.after(0, self.append_log, message)
             self.after(0, self.update_status_text, message)
-            import re
             m = re.search(r'\[(\d+)/(\d+)\]', message)
             if m:
                 当前 = int(m.group(1))
@@ -858,9 +949,13 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
                         模型名 = status.get("模型名称") or "未知"
                         self.after(0, self._更新lm状态, True, f"已连接（模型：{模型名}）")
                     elif status["已启动"]:
-                        self.after(0, self._更新lm状态, False, "已连接但模型未匹配")
+                        原因 = status.get("错误原因") or ""
+                        self.after(0, self._更新lm状态, False,
+                            f"已连接但模型未匹配{f'（{原因}）' if 原因 else ''}")
                     else:
-                        self.after(0, self._更新lm状态, False, "未连接")
+                        # 把分类后的原因直接告诉用户，不再只说“未连接”
+                        self.after(0, self._更新lm状态, False,
+                            status.get("错误原因") or "未连接")
                 else:
                     status = 探测lm_studio状态()
                     if status["已启动"] and status["模型已加载"]:
@@ -869,7 +964,8 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
                     elif status["已启动"]:
                         self.after(0, self._更新lm状态, False, "模型加载中")
                     else:
-                        self.after(0, self._更新lm状态, False, "未启动")
+                        self.after(0, self._更新lm状态, False,
+                            status.get("错误原因") or "未启动")
             except Exception:
                 self.after(0, self._更新lm状态, False, "连接失败")
         threading.Thread(target=_do, daemon=True).start()
