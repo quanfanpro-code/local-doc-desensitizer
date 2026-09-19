@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from 主程序.Excel读取 import Excel公式读取会话, 读取Excel公式值
@@ -71,7 +71,7 @@ def 提取文本(文件路径: str) -> str:
 
 
 def _提取docx文本(路径: str) -> str:
-    from docx import Document
+    from 主程序._docx_xml工具 import 打开Word as Document
     from 主程序._docx_xml工具 import 收集文档全部部件, 提取部件文本
     验证office文件格式(路径)
     doc = Document(路径)
@@ -151,18 +151,23 @@ def _提取pdf文本(路径: str) -> str:
     return "\n".join(页面文本列表)
 
 
+def _有大幅扫描图(page):
+    return any(r.get_area() > page.rect.get_area()*0.5
+               for img in page.get_images() for r in page.get_image_rects(img[0]))
+
+
 def 判断是否扫描版pdf(路径: str, 最小文字阈值: int = 50) -> bool:
     import pymupdf
     with pymupdf.open(路径) as doc:
-        总字数 = 0
-        for page in doc:
-            字数 = len(page.get_text().strip())
-            总字数 += 字数
-            if 字数 < 最小文字阈值:
-                for img in page.get_images():
-                    if any(r.get_area() > page.rect.get_area()*0.5 for r in page.get_image_rects(img[0])):
-                        return True
-        return 总字数 == 0
+        # 可搜索文字层不能证明图片里的原文字已经可安全移除。
+        return any(_有大幅扫描图(page) for page in doc) or not any(page.get_text().strip() for page in doc)
+
+
+def 扫描PDF需要OCR(路径: str, 最小文字阈值: int = 50) -> bool:
+    import pymupdf
+    with pymupdf.open(路径) as doc:
+        return (any(_有大幅扫描图(page) and len(page.get_text().strip()) < 最小文字阈值 for page in doc)
+                or not any(page.get_text().strip() for page in doc))
 
 
 def 收集支持的文件(路径: str, 包含子文件夹: bool = False) -> list[str]:
@@ -227,7 +232,7 @@ def 读取文档块(文件路径: str, Excel会话=None):
         for i, 行 in enumerate(原文.splitlines(keepends=True)):
             块.append(文本块(f"text:{i}", 行, {"行": i}, 原值=行))
     elif 后缀 == ".docx":
-        from docx import Document
+        from 主程序._docx_xml工具 import 打开Word as Document
         from docx.oxml.ns import qn
         for 编号, 节点, 段落 in 遍历Word段落(Document(文件路径)):
             原文 = "".join(t.text or "" for t in 节点)
@@ -242,6 +247,7 @@ def 读取文档块(文件路径: str, Excel会话=None):
         from contextlib import ExitStack
         from itertools import groupby
         from openpyxl import load_workbook
+        from openpyxl.formula import Tokenizer
         with ExitStack() as 资源:
             wb = load_workbook(文件路径, data_only=False)
             资源.callback(wb.close)
@@ -291,7 +297,16 @@ def 读取文档块(文件路径: str, Excel会话=None):
                                 位置["公式复算未完成"] = 计算错误 or "公式含不可用引用或计算错误"
                             if 值 is None:
                                 位置["公式结果未读取"] = True
-                                值 = cell.value
+                                值 = ""
+                            # 常量与计算值分开定位，不把工作表引用作为普通文本。
+                            for 序号,token in enumerate(Tokenizer(cell.value).items):
+                                if token.subtype == "TEXT":
+                                    常量 = token.value[1:-1].replace('""','"')
+                                    常量位置 = {k:v for k,v in 位置.items() if not k.startswith("公式")}
+                                    常量位置.update({"公式常量序号":序号,"主块编号":f"xlsx:{i}:{cell.coordinate}"})
+                                    块.append(文本块(f"xlsx:{i}:{cell.coordinate}:text:{序号}",常量,常量位置,
+                                        f"公式中的文字；工作表：{sheet.title}；表头：{表头}；本行：{行上下文}",
+                                        cell.value,"formula_text"))
                         原文 = _excel单元格转文本(值)
                         块.append(文本块(f"xlsx:{i}:{cell.coordinate}", 原文, 位置,
                                          f"工作表：{sheet.title}；表头：{表头}；本行：{行上下文}", cell.value, cell.data_type))

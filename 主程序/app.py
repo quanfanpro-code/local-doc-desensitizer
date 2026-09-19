@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -18,7 +18,6 @@ except ImportError:
 try:
     from .文档解析器 import 收集支持的文件
     from .脱敏处理器 import 脱敏处理器
-    from .ner引擎 import 全局映射表
     from .mineru桥接 import 探测lm_studio状态
 except ImportError:
     CURRENT_DIR = Path(__file__).resolve().parent
@@ -29,7 +28,6 @@ except ImportError:
             sys.path.insert(0, _p)
     from 文档解析器 import 收集支持的文件
     from 脱敏处理器 import 脱敏处理器
-    from ner引擎 import 全局映射表
     from mineru桥接 import 探测lm_studio状态
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -489,12 +487,6 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
             self.checkbox_date_full.deselect()
             self.checkbox_date_full.configure(state="disabled")
 
-    def browse_mapping_file(self):
-        file_path = filedialog.askopenfilename(
-            title="选择映射表文件",
-            filetypes=[("JSON 文件", "*.json")],
-        )
-        return file_path
 
     def start_desensitize(self):
         if self.is_processing:
@@ -616,49 +608,40 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         原因 = llm_status.get("错误原因") or ""
 
         if 扫描版列表:
-            if 没有_lm:
-                中止(
-                    "扫描版PDF需要LLM",
-                    f"检测到 {len(扫描版列表)} 个扫描版PDF文件，但 {前缀} 未就绪。\n"
-                    + (f"原因：{原因}\n" if 原因 else "")
-                    + f"扫描版PDF必须依赖 LLM 处理，请先确保 {前缀} 已启动并可用。",
-                )
-                return
-            self.after(0, self.append_log, f"检测到 {len(扫描版列表)} 个扫描版PDF，{前缀} 已就绪。")
-            # OCR 前置检查：LLM 就绪不代表 OCR 可用。
-            # 注意检查范围：这里只确认 mineru 命令存在，不等于依赖、配置和识别服务全部健康。
-            if not processor._ocr.是否可用():
-                扫描版文件名 = {str(Path(f)) for f in 扫描版列表}
-                其余文件 = [f for f in files if str(Path(f)) not in 扫描版文件名]
+            try:
+                from .文档解析器 import 扫描PDF需要OCR
+            except ImportError:
+                from 文档解析器 import 扫描PDF需要OCR
+            self.after(0, self.append_log, f"检测到 {len(扫描版列表)} 个扫描版PDF，按文字脱敏并输出 Markdown。")
+            需OCR列表 = [f for f in 扫描版列表 if 扫描PDF需要OCR(f)]
+            # 可用的既有文字层不依赖 OCR；图像识别与模型实体识别分别检查。
+            if 需OCR列表 and not processor._ocr.是否可用():
+                需OCR文件名 = {str(Path(f)) for f in 需OCR列表}
+                其余文件 = [f for f in files if str(Path(f)) not in 需OCR文件名]
                 提示 = (
-                    f"检测到 {len(扫描版列表)} 个扫描版PDF，但 OCR 引擎不可用"
+                    f"检测到 {len(需OCR列表)} 个PDF需要图像文字识别，但 OCR 引擎不可用"
                     "（未找到 mineru 命令；此处只检查命令是否存在，不代表识别服务一定可用）。\n"
                 )
                 if not 其余文件:
                     中止("OCR不可用", 提示 + "本批没有其他可处理的文件，未开始处理。", 错误=True)
                     return
-                # 混合批次不扣住整批：让用户选择跳过扫描件、照常交付其余可用结果
                 if not self._主线程询问(
                     "OCR不可用",
-                    提示 + f"其余 {len(其余文件)} 个文件不受影响。\n\n是否跳过扫描版PDF，继续处理其余文件？",
+                    提示 + f"其余 {len(其余文件)} 个文件不受影响。\n\n是否跳过这些PDF，继续处理其余文件？",
                 ):
                     中止(日志="用户取消，未开始处理。")
                     return
                 self.after(0, self.append_log,
-                    f"OCR 不可用，已跳过 {len(扫描版列表)} 个扫描版PDF，继续处理其余 {len(其余文件)} 个文件。")
+                    f"OCR 不可用，已跳过 {len(需OCR列表)} 个PDF，继续处理其余 {len(其余文件)} 个文件。")
                 files = 其余文件
-                扫描版列表 = []
-            else:
+            elif 需OCR列表:
                 self.after(0, self.append_log,
                     "OCR 预检通过（仅确认 mineru 命令存在，实际识别效果以处理结果为准）。")
+            else:
+                self.after(0, self.append_log, "扫描版PDF已有可用文字层，无需重新进行 OCR。")
 
         if 没有_lm:
-            has_ner_files = any(
-                Path(f).suffix.lower() in (".docx", ".txt", ".md", ".xlsx", ".pptx")
-                for f in files
-                if not Path(f).suffix.lower() == ".pdf"
-            )
-            if has_ner_files:
+            if files:
                 reply = self._主线程询问(
                     f"{前缀} 未就绪",
                     f"{前缀} 未启动或模型未加载。\n"
@@ -797,7 +780,11 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
 
         try:
             result = processor.还原文件列表(files, 映射表路径=None, 输出目录=output_dir, 进度回调=progress_callback)
-            if result.未完成环节:
+            if self.cancel_flag:
+                已处理 = len(result.已生成文件) + result.失败数
+                self.after(0, self.update_status_text,
+                    f"已取消还原：已处理 {已处理}/{文件总数}，已生成 {len(result.已生成文件)}，失败 {result.失败数}")
+            elif result.未完成环节:
                 self.after(0, self.update_status_text, f"已生成 {len(result.已生成文件)} 个还原文件；旧映射存在歧义，详见日志")
             elif result.失败数 > 0:
                 self.after(0, self.update_status_text, f"还原完成：成功 {result.成功数}，失败 {result.失败数}")

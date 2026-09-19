@@ -1,6 +1,16 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from docx.oxml.ns import qn
+
+
+def 打开Word(路径):
+    """通过 python-docx 的 XML 部件类型读取和保存脚注、尾注及其关系。"""
+    from docx import Document
+    from docx.opc.constants import CONTENT_TYPE
+    from docx.opc.part import PartFactory, XmlPart
+    for 类型 in (CONTENT_TYPE.WML_FOOTNOTES,CONTENT_TYPE.WML_ENDNOTES):
+        PartFactory.part_type_for.setdefault(类型,XmlPart)
+    return Document(路径)
 
 
 def 收集文档全部部件(doc):

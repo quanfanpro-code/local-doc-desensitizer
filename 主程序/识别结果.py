@@ -1,4 +1,4 @@
-"""识别与文件写回共同使用的原文位置。"""
+﻿"""识别与文件写回共同使用的原文位置。"""
 from dataclasses import dataclass, field
 
 
@@ -49,7 +49,7 @@ def 合并出现(块列表, 出现列表):
     """验证原词，去重，完整名称优先；相同位置不同主体不擅自选择。"""
     块表 = {b.编号: b for b in 块列表}
     结果, 错误, 冲突位置 = [], [], set()
-    for item in sorted(出现列表, key=lambda x: (x.块编号, x.开始, -(x.结束-x.开始), x.来源 != "模型")):
+    for item in sorted(出现列表, key=lambda x: (x.块编号, x.类型 in {"Ni","Nh","Ns"}, x.开始, -(x.结束-x.开始), x.来源 != "模型")):
         块 = 块表.get(item.块编号)
         if 块 is None or not 0 <= item.开始 < item.结束 <= len(块.原文) or 块.原文[item.开始:item.结束] != item.原词:
             错误.append({"块编号": item.块编号, "环节": "位置验证", "原因": "原词与位置不一致"})
@@ -60,6 +60,10 @@ def 合并出现(块列表, 出现列表):
         重叠 = [p for p in 结果 if p.块编号 == item.块编号 and p.开始 < item.结束 and item.开始 < p.结束]
         if not 重叠:
             结果.append(item)
+        elif item.类型 in {"Ni","Nh","Ns"} and any(p.类型 not in {"Ni","Nh","Ns"} for p in 重叠):
+            # 完全位于规则中的模型子串已被保护；部分交叉不能静默当作完成。
+            if not any(p.开始 <= item.开始 and p.结束 >= item.结束 for p in 重叠):
+                错误.append({"块编号":item.块编号,"环节":"跨度冲突","原因":"模型范围与完整固定格式范围交叉，已保留固定格式替换，模型范围待核对"})
         elif any(p.开始 == item.开始 and p.结束 == item.结束 and p.机构编号 != item.机构编号 and p.机构编号 and item.机构编号 for p in 重叠):
             错误.append({"块编号": item.块编号, "环节": "主体核对", "原因": "相同位置指向不同主体"})
             冲突位置.add(key)

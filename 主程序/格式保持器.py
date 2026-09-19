@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import shutil
 from pathlib import Path
@@ -100,7 +100,7 @@ def _还原文本文件(路径: str, 映射: 全局映射表, 输出路径: str)
 
 
 def _脱敏docx(路径: str, 映射: 全局映射表, 输出路径: str) -> str:
-    from docx import Document
+    from 主程序._docx_xml工具 import 打开Word as Document
     from 主程序._docx_xml工具 import 收集文档全部部件, 替换部件文本
     from 主程序.文档解析器 import 验证office文件格式
     验证office文件格式(路径)
@@ -113,7 +113,7 @@ def _脱敏docx(路径: str, 映射: 全局映射表, 输出路径: str) -> str:
 
 
 def _还原docx(路径: str, 映射: 全局映射表, 输出路径: str) -> str:
-    from docx import Document
+    from 主程序._docx_xml工具 import 打开Word as Document
     from 主程序._docx_xml工具 import 收集文档全部部件, 替换部件文本
     from 主程序.文档解析器 import 验证office文件格式
     验证office文件格式(路径)
@@ -268,7 +268,7 @@ def _还原ppt(路径: str, 映射: 全局映射表, 输出路径: str) -> str:
 def _既有映射PDF(路径, 项目, 输出路径):
     """旧映射接口仍支持 PDF；读取原件、保存到不同目标，避免同路径保存错误。"""
     import pymupdf
-    from 主程序.定位写回 import 备份已有输出, _PDF插入
+    from 主程序.定位写回 import 备份已有输出, _PDF插入, _PDF清除字符, _PDF区域字符框
     if Path(路径).resolve() == Path(输出路径).resolve():
         raise ValueError("输出路径不能覆盖原件")
     with pymupdf.open(路径) as doc:
@@ -280,7 +280,7 @@ def _既有映射PDF(路径, 项目, 输出路径):
                     if any((rect & r).get_area() > 0 for r in 已占):
                         continue
                     # fill=False 不做填充：删除文字后显露原背景，不用白块遮挡图片/线条/底色
-                    page.add_redact_annot(rect,fill=False)
+                    _PDF清除字符(page,_PDF区域字符框(page,rect))
                     已占.append(rect)
                     写入.append((page.number,rect,替换))
             # images 默认会涂白重叠图片像素，必须显式保留；graphics=0 保留矢量线条

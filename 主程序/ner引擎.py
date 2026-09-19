@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import sys
@@ -36,54 +36,13 @@ ENTITY_TYPE_LABELS: dict[str, str] = {
     "date": "日期",
 }
 
-BANK_ACCOUNT_PATTERN = re.compile(r"(?<!\d)\d{16,19}(?!\d)")
-CREDIT_CODE_PATTERN = re.compile(r"(?<![0-9A-Z])[0-9A-Z]{18}(?![0-9A-Z])")
-
-MOBILE_PHONE_PATTERN = re.compile(
-    r"(?<!\d)"
-    r"(?:"
-    r"1[3-9]\d{9}"
-    r"|"
-    r"\+[1-9]\d{6,14}"
-    r"|"
-    r"00[1-9]\d{6,13}"
-    r")"
-    r"(?!\d)"
-)
-
-LANDLINE_PATTERN = re.compile(
-    r"(?<!\d)"
-    r"(?:"
-    r"0\d{2,3}[-\s]?\d{7,8}"
-    r"|"
-    r"\+[1-9]\d{0,3}[-\s]?\d{6,14}"
-    r"|"
-    r"00[1-9]\d{0,3}[-\s]?\d{6,13}"
-    r")"
-    r"(?:\s*(?:转|分机|ext\.?|x)\s*\d{2,6})?"
-    r"(?!\d)"
-)
-
-ID_CARD_PATTERN = re.compile(
-    r"(?<!\d)"
-    r"[1-9]\d{5}"
-    r"(?:19|20)\d{2}"
-    r"(?:0[1-9]|1[0-2])"
-    r"(?:0[1-9]|[12]\d|3[01])"
-    r"\d{3}[\dXx]"
-    r"(?!\d)"
-)
-
-EMAIL_PATTERN = re.compile(
-    r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}"
-)
 
 PLATE_NUMBER_PATTERN = re.compile(
-    r"(?<![A-Za-z\u4e00-\u9fff])"
-    r"(?:[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤川青藏琼宁]"
-    r"[A-HJ-NP-Z]"
-    r"[A-HJ-NP-Z0-9]{4,5}"
-    r"[A-HJ-NP-Z0-9挂学警港澳])"
+    # 基于 JioNLP 的字符集及分隔符，保留既有特殊尾字；许可见 docs/规则来源.md。
+    r"(?<![A-Za-z0-9])"
+    r"[京津沪渝黑吉辽新藏青蒙晋冀豫甘陕川贵云宁苏浙皖鲁赣鄂湘粤闽桂琼]"
+    r"[A-HJ-NP-Za-hj-np-z][·. 　]?"
+    r"(?:[A-HJ-NP-Za-hj-np-z0-9]{5,6}|[A-HJ-NP-Za-hj-np-z0-9]{4,5}[挂学警港澳])"
     r"(?![A-Za-z0-9])"
 )
 
@@ -95,42 +54,19 @@ IPV4_PATTERN = re.compile(
 )
 
 MAC_ADDRESS_PATTERN = re.compile(
-    r"(?<![\da-fA-F])"
-    r"(?:[0-9A-Fa-f]{2}[:-]){5}"
-    r"[0-9A-Fa-f]{2}"
-    r"(?![\da-fA-F])"
+    # 复用 Presidio 的同分隔符和 Cisco 模式；ASCII 边界允许中文相邻。
+    r"(?<![0-9A-Za-z])(?:"
+    r"[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}"
+    r"|[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}\.[0-9A-Fa-f]{4}"
+    r")(?![0-9A-Za-z])"
 )
 
-AMOUNT_PATTERN = re.compile(
-    r"(?<!\d)"
-    r"((?:\d{1,3}(?:,\d{3})*|\d+)(?:\.\d{1,2})?)"
-    r"\s*(万元|亿元|万|亿|元|港元|美元|欧元|日元|英镑)"
-)
 
 AMOUNT_NO_UNIT_PATTERN = re.compile(
     r"(?<!\d)"
     r"((?:\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?)"
     r"(?!\d)"
 )
-
-_金额单位倍数 = {
-    "元": 1, "港元": 1, "美元": 1, "欧元": 1, "日元": 1, "英镑": 1,
-    "万": 10000, "万元": 10000,
-    "亿": 100000000, "亿元": 100000000,
-}
-
-
-def _模糊化金额(原始匹配串: str, 数字部分: str, 单位: str) -> str | None:
-    try:
-        纯数字 = float(数字部分.replace(",", ""))
-    except ValueError:
-        return None
-    换算为元 = 纯数字 * _金额单位倍数.get(单位, 1)
-    if 换算为元 < 1000000:
-        return None
-    换算为万 = round(换算为元 / 10000)
-    取整到百 = round(换算为万 / 100) * 100
-    return f"{取整到百}万余元"
 
 
 ORG_SUFFIX_RULES: list[tuple[str, str]] = [
@@ -268,19 +204,6 @@ class 全局映射表:
                 return
             i += 1
 
-    def 合并代号(self, 旧代号: str, 新代号: str) -> int:
-        """把旧代号下挂的所有原文整体改挂到新代号（简称并入主实体时用）
-
-        返回实际改挂的原文条数。旧代号随之作废删除。
-        """
-        if 旧代号 == 新代号:
-            return 0
-        改挂列表 = [原文 for 原文, 代号 in self._正向.items() if 代号 == 旧代号]
-        for 原文 in 改挂列表:
-            self._正向[原文] = 新代号
-        self._反向.pop(旧代号, None)
-        self._版本 += 1
-        return len(改挂列表)
 
     @property
     def 正向映射(self) -> dict[str, str]:

@@ -1,4 +1,4 @@
-"""验证公式批量传输、资源释放与实际脱敏入口；材料保留供复核。"""
+﻿"""验证公式批量传输、资源释放与实际脱敏入口；材料保留供复核。"""
 from pathlib import Path
 from types import SimpleNamespace
 import hashlib
@@ -130,12 +130,12 @@ class Excel读取测试(unittest.TestCase):
                 with self.会话() as 会话:
                     for _ in range(2):
                         块=文档解析器.读取文档块(str(p),Excel会话=会话)
-                        self.assertEqual(块[0].原文,"旧机构")
-                        self.assertIn("公式复算未完成",块[0].位置)
+                        self.assertEqual(next(b for b in 块 if b.数据类型 == "f").原文,"旧机构")
+                        self.assertIn("公式复算未完成",next(b for b in 块 if b.数据类型 == "f").位置)
             self.assertEqual(启动.call_count,1)
             块=文档解析器.读取文档块(str(p))
-            self.assertEqual(块[0].原文,"新机构")
-            self.assertNotIn("公式复算未完成",块[0].位置)
+            self.assertEqual(next(b for b in 块 if b.数据类型 == "f").原文,"新机构")
+            self.assertNotIn("公式复算未完成",next(b for b in 块 if b.数据类型 == "f").位置)
 
     def test_输出复算失败保留文件但不报告完全成功(self):
         from 主程序.脱敏处理器 import 脱敏处理器

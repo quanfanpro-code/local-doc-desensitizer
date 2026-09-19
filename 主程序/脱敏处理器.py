@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
@@ -167,7 +167,7 @@ class 脱敏处理器:
                     spans = 准备替换(块,检出,映射)
                     md = 目标目录 / f"{名称}_脱敏.md"
                     备份已有输出(md)
-                    md.write_text("\n".join(按位置替换(b.原文,spans.get(b.编号,[])) for b in 块),encoding="utf-8-sig")
+                    md.write_text("\n".join(按位置替换(b.原文,spans.get(b.编号,[])) for b in 块 if b.数据类型 != "formula_text"),encoding="utf-8-sig")
                 本文件问题.extend(检出.未完成)
                 if 本文件问题:
                     结果.未完成环节.extend({"文件":文件路径,**问题} for 问题 in 本文件问题)
@@ -187,9 +187,21 @@ class 脱敏处理器:
         from 主程序.识别结果 import 按位置替换
         spans = 准备替换(原块,检出,映射)
         输出表 = {b.编号:b for b in 输出块}
+        from collections import Counter
+        for 页 in {b.位置["页"] for b in 原块 if "页" in b.位置}:
+            预期全文 = "".join(按位置替换(b.原文,spans.get(b.编号,[])) for b in 原块 if b.位置.get("页") == 页)
+            实际全文 = "".join(b.原文 for b in 输出块 if b.位置.get("页") == 页)
+            # PDF 插入会改变抽取顺序；逐页核对字符数量，不能只确认代号存在。
+            if Counter("".join(预期全文.split())) != Counter("".join(实际全文.split())):
+                raise ValueError(f"PDF实际输出文字与预期不一致，可能丢失或多出内容，页 {页+1}")
         for b in 原块:
             if b.编号 not in spans:
                 continue
+            if b.数据类型 == "formula_text":
+                主块 = 输出表.get(b.位置["主块编号"])
+                if 主块 is not None and 主块.数据类型 != "f":
+                    # 该格敏感计算结果已转成脱敏值，公式和隐藏常量不再存在。
+                    continue
             预期 = 按位置替换(b.原文,spans[b.编号])
             if "页" in b.位置:
                 页文字 = "\n".join(x.原文 for x in 输出块 if x.位置.get("页") == b.位置["页"])
@@ -292,6 +304,11 @@ class 脱敏处理器:
     def _提取文本自动处理(self, 文件路径: str, 回调: Callable[[str], None] | None = None) -> str:
         后缀 = Path(文件路径).suffix.lower()
         if 后缀 == ".pdf" and 判断是否扫描版pdf(文件路径):
+            from 主程序.文档解析器 import 扫描PDF需要OCR
+            if not 扫描PDF需要OCR(文件路径):
+                if 回调:
+                    回调(f"读取扫描件已有文字层，输出脱敏 Markdown：{Path(文件路径).name}")
+                return 提取文本(文件路径)
             if not self._ocr.是否可用():
                 raise RuntimeError("扫描版PDF需要OCR引擎，但当前OCR引擎不可用。")
             if 回调:

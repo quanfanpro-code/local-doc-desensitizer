@@ -1,4 +1,4 @@
-"""把核准的具体出现写回文件，并保存被改位置的原始值。"""
+﻿"""把核准的具体出现写回文件，并保存被改位置的原始值。"""
 from __future__ import annotations
 from datetime import datetime
 import hashlib
@@ -106,6 +106,32 @@ def 替换节点(节点, 替换):
     return 原字
 
 
+def _PDF字符(page):
+    return [c for b in page.get_text("rawdict")["blocks"] for line in b.get("lines",[])
+            for span in line["spans"] for c in span["chars"]]
+
+
+def _PDF区域字符框(page, 区域):
+    import pymupdf
+    rect = pymupdf.Rect(区域)
+    return [c["bbox"] for c in _PDF字符(page)
+            if rect.contains(pymupdf.Point((c["bbox"][0]+c["bbox"][2])/2,(c["bbox"][1]+c["bbox"][3])/2))]
+
+
+def _PDF清除字符(page, 字符框):
+    """MuPDF 按边界框相交删除整字；用字内小区域触发，先排除邻字碰撞。"""
+    import pymupdf
+    目标 = {tuple(r) for r in 字符框}
+    保留 = [pymupdf.Rect(c["bbox"]) for c in _PDF字符(page) if tuple(c["bbox"]) not in 目标]
+    for r in 目标:
+        cx,cy = (r[0]+r[2])/2,(r[1]+r[3])/2
+        dx,dy = min((r[2]-r[0])/4,0.1),min((r[3]-r[1])/4,0.1)
+        框 = pymupdf.Rect(cx-dx,cy-dy,cx+dx,cy+dy)
+        if 框.is_empty or any((框 & p).get_area() > 0 for p in 保留):
+            raise ValueError(f"PDF目标文字与其他文字边界重叠，无法安全清除，页 {page.number+1}")
+        page.add_redact_annot(框,fill=False)
+
+
 def _PDF插入(page, 矩形, 文字, 字号=10):
     import pymupdf
     字体文件 = Path(r"C:\Windows\Fonts\msyh.ttc")
@@ -131,7 +157,7 @@ def 保存(原路径, 块列表, 结果, 映射, 输出路径):
         Path(输出路径).write_text(内容,encoding="utf-8-sig")
     elif 后缀 in {".docx",".pptx"}:
         if 后缀 == ".docx":
-            from docx import Document
+            from 主程序._docx_xml工具 import 打开Word as Document
             doc = Document(原路径)
             段落 = [(k,节点) for k,节点,p in 遍历Word段落(doc)]
         else:
@@ -153,18 +179,35 @@ def 保存(原路径, 块列表, 结果, 映射, 输出路径):
         from openpyxl import load_workbook
         from openpyxl.formula import Tokenizer
         wb = load_workbook(原路径)
-        处理位置 = {(b.位置["工作表"],b.位置["单元格"]) for b in 块列表 if b.编号 in 替换}
+        单元格块 = {}
+        for b in 块列表:
+            单元格块.setdefault((b.位置["工作表"],b.位置["单元格"]),[]).append(b)
+        处理位置 = {k for k,bs in 单元格块.items() if any(b.编号 in 替换 for b in bs)}
         try:
-            for b in 块列表:
-                spans = 替换.get(b.编号)
-                if not spans:
+            for 位置,bs in 单元格块.items():
+                if 位置 not in 处理位置:
                     continue
-                cell = wb[b.位置["工作表"]][b.位置["单元格"]]
+                b = next(x for x in bs if x.数据类型 != "formula_text")
+                spans = 替换.get(b.编号,[])
+                cell = wb[位置[0]][位置[1]]
                 输出值 = 按位置替换(b.原文,spans)
                 if b.数据类型 == "f":
-                    tokens = Tokenizer(b.原值).items
-                    # 仅有一个文字常量时可安全修改；引用本身不是机构称呼。
-                    if len(tokens) == 1 and tokens[0].subtype == "TEXT" and tokens[0].value[1:-1].replace('""','"') == b.原文:
+                    公式 = Tokenizer(b.原值)
+                    tokens = 公式.items
+                    单常量 = (len(tokens) == 1 and tokens[0].subtype == "TEXT"
+                              and tokens[0].value[1:-1].replace('""','"') == b.原文)
+                    for 常量 in bs:
+                        修改 = 替换.get(常量.编号)
+                        if 常量.数据类型 != "formula_text" or not 修改:
+                            continue
+                        token = tokens[常量.位置["公式常量序号"]]
+                        if token.subtype != "TEXT" or token.value[1:-1].replace('""','"') != 常量.原文:
+                            raise ValueError(f"公式常量结构变化，不能按原位置写回：{常量.编号}")
+                        token.value = '"' + 按位置替换(常量.原文,修改).replace('"','""') + '"'
+                    if not spans:
+                        # 隐藏分支、参数里的文字可定位修改，计算和引用仍由原公式负责。
+                        输出值 = 公式.render()
+                    elif 单常量:
                         输出值 = '="' + 输出值.replace('"','""') + '"'
                     elif len(tokens) == 1 and tokens[0].subtype == "RANGE":
                         m = re.fullmatch(r"(?:(?:'((?:[^']|'')+)'|([^!]+))!)?(\$?[A-Z]+\$?\d+)",tokens[0].value)
@@ -173,6 +216,7 @@ def 保存(原路径, 块列表, 结果, 映射, 输出路径):
                             坐标 = m.group(3).replace("$","")
                             if (sheet,坐标) in 处理位置:
                                 continue
+                    # 敏感计算结果无法由单个常量或已处理引用可靠修正时，仅该格转值。
                 原值 = cell.value
                 日期值 = isinstance(原值,datetime)
                 映射.文件记录.append({"格式":后缀,"块编号":b.编号,"位置":b.位置,
@@ -189,20 +233,20 @@ def 保存(原路径, 块列表, 结果, 映射, 输出路径):
     elif 后缀 == ".pdf":
         import pymupdf
         with pymupdf.open(原路径) as doc:
-            待写 = []
+            待写, 清除 = [], {}
             for b in 块列表:
                 for s,e,代号 in 替换.get(b.编号,[]):
                     框 = pymupdf.Rect(b.位置["字符框"][s])
                     for rect in b.位置["字符框"][s+1:e]:
                         框 |= pymupdf.Rect(rect)
                     page = doc[b.位置["页"]]
-                    # fill=False 不做填充：删除文字后显露原背景，不用白块遮挡图片/线条/底色
-                    page.add_redact_annot(框,fill=False)
+                    清除.setdefault(page.number,[]).extend(b.位置["字符框"][s:e])
                     待写.append({"格式":后缀,"块编号":f"{b.编号}:{s}",
                         "页":page.number,"矩形":list(框),"原文":b.原文[s:e],"输出值":代号,
                         "字号":b.位置.get("字号",10)})
             for page in doc:
-                # images 默认会涂白重叠图片像素，必须显式保留；graphics=0 保留矢量线条
+                _PDF清除字符(page,清除.get(page.number,[]))
+                # 保留背景图和线条；整页扫描图已在入口转为 Markdown 输出。
                 page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,graphics=0)
             for r in 待写:
                 _PDF插入(doc[r["页"]],r["矩形"],r["输出值"],r["字号"])
@@ -225,7 +269,7 @@ def 还原(文件路径, 映射, 输出路径):
                 区域文字 = "".join(page.get_textbox(pymupdf.Rect(r["矩形"])).split())
                 if "".join(r["输出值"].split()) not in 区域文字:
                     raise ValueError("PDF中的代号与还原映射不一致")
-                page.add_redact_annot(r["矩形"],fill=False)
+                _PDF清除字符(page,_PDF区域字符框(page,r["矩形"]))
             for page in doc:
                 page.apply_redactions(images=pymupdf.PDF_REDACT_IMAGE_NONE,graphics=0)
             for r in 记录.values():
@@ -249,7 +293,7 @@ def 还原(文件路径, 映射, 输出路径):
             wb.close()
         return 输出路径
     if 后缀 == ".docx":
-        from docx import Document
+        from 主程序._docx_xml工具 import 打开Word as Document
         doc = Document(文件路径)
         段落 = [(k,节点) for k,节点,p in 遍历Word段落(doc)]
     elif 后缀 == ".pptx":
