@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable
@@ -67,6 +67,8 @@ class 脱敏处理器:
         from 主程序.定位写回 import 保存, 准备替换, 残留对应原文, 备份已有输出
         if not 文件路径列表:
             raise ValueError("没有找到支持的文件")
+        if self.跳过模型 and 进度回调:
+            进度回调("纯正则模式：只脱敏机构名称与固定规则，人名、详细地址不处理。")
         self._取消标记 = False
         self._ner._取消检查 = lambda: self._取消标记
         结果 = 脱敏处理结果()
@@ -102,7 +104,8 @@ class 脱敏处理器:
                     文本 = self._提取文本自动处理(文件路径, 进度回调)
                     块 = [文本块(f"text:{i}",行,{"行":i}) for i,行 in enumerate(文本.splitlines(keepends=True))]
                 if self.跳过模型:
-                    检出 = 识别结果()
+                    from 主程序.正则机构识别 import 识别正则机构
+                    检出 = 识别正则机构(块, 模型进度)
                 else:
                     if 读取用户设置().get("debug_ner_log"):
                         日志路径 = 目标目录 / f"{名称}_NER调试.log"

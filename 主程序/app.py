@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -194,9 +194,26 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         lm_frame.grid(row=0, column=0, padx=(14, 6), pady=12, sticky="ew")
         lm_frame.grid_columnconfigure(1, weight=1)
 
+        # 识别方式：LLM 需模型；纯正则在本地用规则识别机构，不调用模型
+        self.识别方式_var = ctk.StringVar(
+            value="纯正则" if self.settings.get("识别方式") == "纯正则" else "LLM"
+        )
+        识别方式行 = ctk.CTkFrame(lm_frame, fg_color="transparent")
+        识别方式行.grid(row=0, column=0, columnspan=3, pady=(0, 8), sticky="ew")
+        识别方式行.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(
+            识别方式行, text="识别方式:", font=ctk.CTkFont(size=12)
+        ).grid(row=0, column=0, padx=(0, 6), sticky="w")
+        ctk.CTkOptionMenu(
+            识别方式行,
+            values=["LLM", "纯正则"],
+            variable=self.识别方式_var,
+            command=self._切换识别方式,
+        ).grid(row=0, column=1, sticky="ew")
+
         ctk.CTkLabel(
             lm_frame, text="LLM 配置", font=ctk.CTkFont(size=13, weight="bold")
-        ).grid(row=0, column=0, columnspan=3, pady=(0, 6), sticky="w")
+        ).grid(row=1, column=0, columnspan=3, pady=(0, 6), sticky="w")
 
         # 模式切换：本地 LM Studio / 在线 API
         self.llm_mode_var = ctk.StringVar(
@@ -207,11 +224,11 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
             values=["本地 LM Studio", "在线 API"],
             variable=self.llm_mode_var,
             command=self._切换llm模式,
-        ).grid(row=1, column=0, columnspan=3, pady=(0, 8), sticky="ew")
+        ).grid(row=2, column=0, columnspan=3, pady=(0, 8), sticky="ew")
 
         # ---- 本地模式配置区 ----
         self.lm_frame_local = ctk.CTkFrame(lm_frame, fg_color="transparent")
-        self.lm_frame_local.grid(row=2, column=0, columnspan=3, sticky="ew")
+        self.lm_frame_local.grid(row=3, column=0, columnspan=3, sticky="ew")
         self.lm_frame_local.grid_columnconfigure(1, weight=1)
 
         self.lm_port_var = ctk.StringVar(
@@ -589,23 +606,34 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         if 已取消():
             return
 
-        try:
-            if 是在线:
-                try:
-                    from .mineru桥接 import 探测在线api状态
-                except ImportError:
-                    from mineru桥接 import 探测在线api状态
-                llm_status = 探测在线api状态(api_base, api_key, model)
-            else:
-                llm_status = 探测lm_studio状态()
-        except Exception as e:
-            中止("探测失败", f"LLM 状态探测失败：\n{e}", 错误=True)
-            return
-        if 已取消():
-            return
+        # 识别方式：纯正则不探测模型，也不提示降级
+        识别方式控件 = getattr(self, "识别方式_var", None)
+        纯正则 = (识别方式控件.get() if 识别方式控件 is not None else "LLM") == "纯正则"
+        if 纯正则:
+            processor.跳过模型 = True
+            self.after(0, self.append_log,
+                "纯正则模式：只脱敏机构名称与固定规则，人名、详细地址不处理。")
 
-        没有_lm = not (llm_status.get("已启动") and llm_status.get("模型已加载"))
-        原因 = llm_status.get("错误原因") or ""
+        没有_lm = False
+        原因 = ""
+        if not 纯正则:
+            try:
+                if 是在线:
+                    try:
+                        from .mineru桥接 import 探测在线api状态
+                    except ImportError:
+                        from mineru桥接 import 探测在线api状态
+                    llm_status = 探测在线api状态(api_base, api_key, model)
+                else:
+                    llm_status = 探测lm_studio状态()
+            except Exception as e:
+                中止("探测失败", f"LLM 状态探测失败：\n{e}", 错误=True)
+                return
+            if 已取消():
+                return
+
+            没有_lm = not (llm_status.get("已启动") and llm_status.get("模型已加载"))
+            原因 = llm_status.get("错误原因") or ""
 
         if 扫描版列表:
             try:
@@ -646,8 +674,9 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
                     f"{前缀} 未就绪",
                     f"{前缀} 未启动或模型未加载。\n"
                     + (f"原因：{原因}\n\n" if 原因 else "\n")
-                    + "人名/地名/机构名将无法识别，但其他脱敏规则（手机号、身份证号、金额等）不受影响。\n\n"
-                    "是否继续？（仅使用正则规则脱敏）",
+                    + "是否改用纯正则继续？\n"
+                      "改用后只脱敏机构名称与固定规则（手机号、身份证号、金额等），"
+                      "人名、详细地址不会被处理。\n\n",
                 )
                 if not reply:
                     中止(日志="用户取消，未开始处理。")
@@ -655,7 +684,7 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
                 # 用户的选择必须真正生效：整个处理流程不再调用模型识别
                 processor.跳过模型 = True
                 self.after(0, self.append_log,
-                    f"{前缀} 不可用，仅使用正则规则脱敏（人名/地名/机构名将被跳过）。")
+                    "模型不可用，改用纯正则：只脱敏机构名称与固定规则，人名、详细地址不处理。")
 
         # 启动前最后确认一次：等待期间点了取消就不能又自动开始脱敏
         if 已取消():
@@ -814,6 +843,11 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         entry.insert(0, value)
         entry.configure(state="readonly")
 
+    def _切换识别方式(self, 选择值: str):
+        self.settings["识别方式"] = 选择值
+        save_settings(str(SETTINGS_PATH), self.settings)
+        self.append_log(f"识别方式已切换为「{选择值}」。")
+
     def _切换llm模式(self, 选择值: str):
         """segmented button 回调：切换本地/在线模式"""
         if self.is_processing:
@@ -828,10 +862,10 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         # 切换显示对应的子 frame
         if 新模式 == "online":
             self.lm_frame_local.grid_forget()
-            self.lm_frame_online.grid(row=2, column=0, columnspan=3, sticky="ew")
+            self.lm_frame_online.grid(row=3, column=0, columnspan=3, sticky="ew")
         else:
             self.lm_frame_online.grid_forget()
-            self.lm_frame_local.grid(row=2, column=0, columnspan=3, sticky="ew")
+            self.lm_frame_local.grid(row=3, column=0, columnspan=3, sticky="ew")
         self.append_log(f"已切换到 {'在线 API' if 新模式 == 'online' else '本地 LM Studio'} 模式")
         self._刷新lm状态()
 
