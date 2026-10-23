@@ -375,17 +375,11 @@ class NER引擎:
         from 主程序.文档识别 import 请求模型
         return 请求模型(self, 消息, 最大输出)
 
-    def _解析文档返回(self, 消息, 块列表, 机构资料=None, 全文块=None):
-        from 主程序.文档识别 import 解析返回
-        return 解析返回(self, 消息, 块列表, 机构资料, 全文块)
 
     def 识别文档(self, 块列表, 进度回调=None):
         from 主程序.文档识别 import 识别文档
         return 识别文档(self, 块列表, 进度回调)
 
-    def 复查输出(self, 输出块, 原块, 已有机构, 进度回调=None):
-        from 主程序.文档识别 import 复查输出
-        return 复查输出(self, 输出块, 原块, 已有机构, 进度回调)
 
     def __init__(self) -> None:
         self._可用: bool | None = None

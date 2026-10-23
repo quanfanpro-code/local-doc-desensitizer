@@ -69,7 +69,7 @@ class 固定与合并修复测试(unittest.TestCase):
             p=Path(d)/"模型冲突.txt";p.write_text("联系人13800138000。",encoding="utf-8-sig")
             proc=脱敏处理器(启用日期=False)
             模型=识别结果(出现=[出现记录("text:0",0,9,"联系人138001","Nh")])
-            with patch.object(proc._ner,"识别文档",return_value=模型),patch.object(proc._ner,"复查输出",return_value=识别结果()):
+            with patch.object(proc._ner,"识别文档",return_value=模型):
                 result=proc.处理文件列表([str(p)],str(Path(d)/"输出"))
             self.assertEqual(Path(result.已生成文件[0]).read_text(encoding="utf-8-sig"),"联系人[手机号1]。")
             self.assertTrue(any("冲突" in r.get("环节","") for r in result.未完成环节))

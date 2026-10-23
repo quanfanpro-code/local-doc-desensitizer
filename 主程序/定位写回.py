@@ -50,38 +50,6 @@ def 准备替换(块列表, 结果, 映射):
     return 替换
 
 
-def 残留对应原文(原块, 输出块, 替换, 出现):
-    """仅在可确定对应的未修改文字区域内，把残留位置映回原文。"""
-    from dataclasses import replace
-    源表 = {b.编号:b for b in 原块}
-    输出表 = {b.编号:b for b in 输出块}
-    out = 输出表[出现.块编号]
-    src = 源表.get(出现.块编号)
-    if src and 按位置替换(src.原文,替换.get(src.编号,[])) == out.原文:
-        前原 = 前新 = 0
-        for s,e,token in sorted(替换.get(src.编号,[])) + [(len(src.原文),len(src.原文),"")]:
-            尾新 = 前新+s-前原
-            if 前新 <= 出现.开始 < 出现.结束 <= 尾新:
-                return replace(出现,块编号=src.编号,开始=前原+出现.开始-前新,结束=前原+出现.结束-前新)
-            前原,前新 = e,尾新+len(token)
-    if "页" in out.位置:
-        import pymupdf
-        目标框 = pymupdf.Rect(out.位置["字符框"][出现.开始])
-        for r in out.位置["字符框"][出现.开始+1:出现.结束]:
-            目标框 |= pymupdf.Rect(r)
-        候选 = []
-        for b in 原块:
-            if b.位置.get("页") != out.位置["页"]:
-                continue
-            for m in re.finditer(re.escape(出现.原词),b.原文):
-                框 = pymupdf.Rect(b.位置["字符框"][m.start()])
-                for r in b.位置["字符框"][m.start()+1:m.end()]:
-                    框 |= pymupdf.Rect(r)
-                if (框 & 目标框).get_area() > min(框.get_area(),目标框.get_area())*0.5:
-                    候选.append(replace(出现,块编号=b.编号,开始=m.start(),结束=m.end()))
-        if len(候选) == 1:
-            return 候选[0]
-    return None
 
 
 def 替换节点(节点, 替换):

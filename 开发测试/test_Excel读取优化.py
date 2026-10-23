@@ -145,7 +145,7 @@ class Excel读取测试(unittest.TestCase):
             原=文本块("xlsx:0:A1","3",{"工作表":"Sheet","单元格":"A1"},原值="=SUM(1,2)",数据类型="f")
             出=文本块("xlsx:0:A1","3",{"工作表":"Sheet","单元格":"A1","公式复算未完成":"输出计算失败"},原值="=SUM(1,2)",数据类型="f")
             proc=脱敏处理器()
-            with patch.object(文档解析器,"读取文档块",side_effect=[[原],[出]]),patch.object(proc._ner,"识别文档",return_value=识别结果()),patch.object(proc._ner,"复查输出",return_value=识别结果()):
+            with patch.object(文档解析器,"读取文档块",side_effect=[[原],[出]]), patch.object(proc._ner,"识别文档",return_value=识别结果()):
                 结果=proc.处理文件列表([str(p)],d)
             self.assertEqual(结果.成功数,0)
             self.assertEqual(len(结果.已生成文件),1)
@@ -177,7 +177,7 @@ class Excel读取测试(unittest.TestCase):
                 ws["A1"]='="138"&"00138000"'; ws["B1"]="=SUM(1,2)"; wb.save(p); wb.close()
                 文件.append(str(p)); 原件.append(p.read_bytes())
             处理器=脱敏处理器()
-            with patch("win32com.client.DispatchEx",wraps=win32com.client.DispatchEx) as 启动,patch.object(处理器._ner,"识别文档",side_effect=lambda *a:识别结果()),patch.object(处理器._ner,"复查输出",side_effect=lambda *a:识别结果()):
+            with patch("win32com.client.DispatchEx",wraps=win32com.client.DispatchEx) as 启动, patch.object(处理器._ner,"识别文档",side_effect=lambda *a:识别结果()):
                 结果=处理器.处理文件列表(文件,d)
             self.assertEqual(结果.成功数,2,结果.未完成环节)
             self.assertEqual(启动.call_count,1,"原件及输出复查应复用本任务实例")

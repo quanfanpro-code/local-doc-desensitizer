@@ -226,7 +226,7 @@ class 完整入口测试(unittest.TestCase):
             b.write_text("13900139000",encoding="utf-8")
             源字节 = [a.read_bytes(),b.read_bytes()]
             proc = 脱敏处理器()
-            with patch.object(proc._ner,"识别文档",side_effect=lambda *a:识别结果()),patch.object(proc._ner,"复查输出",side_effect=lambda *a:识别结果()):
+            with patch.object(proc._ner,"识别文档",side_effect=lambda *a:识别结果()):
                 result = proc.处理文件列表([str(a),str(b)],d)
             self.assertEqual(result.成功数,2)
             self.assertEqual([a.read_bytes(),b.read_bytes()],源字节)
@@ -241,7 +241,7 @@ class 完整入口测试(unittest.TestCase):
                 file = folder/"原文.txt"; file.write_text(text,encoding="utf-8")
                 files.append(str(file))
             proc = 脱敏处理器()
-            with patch.object(proc._ner,"识别文档",side_effect=lambda *a:识别结果()),patch.object(proc._ner,"复查输出",side_effect=lambda *a:识别结果()):
+            with patch.object(proc._ner,"识别文档",side_effect=lambda *a:识别结果()):
                 result = proc.处理文件列表(files,d)
             self.assertEqual(result.成功数,2)
             self.assertEqual(len(set(result.已生成文件)),2)
@@ -259,7 +259,7 @@ class 完整入口测试(unittest.TestCase):
             ocr = Mock(); ocr.是否可用.return_value = True
             ocr.pdf转文本.return_value = "电话13800138000"
             proc = 脱敏处理器(ocr引擎=ocr)
-            with patch.object(proc._ner,"识别文档",return_value=识别结果()),patch.object(proc._ner,"复查输出",return_value=识别结果()):
+            with patch.object(proc._ner,"识别文档",return_value=识别结果()):
                 result = proc.处理文件列表([str(file)],d)
             self.assertEqual(result.成功数,1)
             self.assertTrue(result.已生成文件[0].endswith(".md"))
@@ -275,7 +275,7 @@ class 完整入口测试(unittest.TestCase):
             原件.write_text("供应商小麦，电话13800138000。",encoding="utf-8")
             处理器 = 脱敏处理器(启用日期=False)
             部分 = 识别结果(未完成=[{"块编号":"text:0","环节":"逐处核对","原因":"请求超时"}])
-            with patch.object(处理器._ner,"识别文档",return_value=部分), patch.object(处理器._ner,"复查输出",return_value=识别结果()):
+            with patch.object(处理器._ner,"识别文档",return_value=部分):
                 结果 = 处理器.处理文件列表([str(原件)],目录)
             self.assertEqual(结果.成功数,0)
             self.assertEqual(结果.失败数,0)
@@ -287,27 +287,22 @@ class 完整入口测试(unittest.TestCase):
             映射 = 全局映射表(); 映射.从文件加载(结果.映射表路径列表[0])
             self.assertEqual(映射.批量还原文本(内容),"供应商小麦，电话13800138000。")
 
-    def test_实际输出复查发现新简称后补充定位写回(self):
+    def test_单轮识别包含全部名称且保存后不再调用模型(self):
         from unittest.mock import patch
-        from 主程序.脱敏处理器 import 脱敏处理器, 脱敏处理结果
-        self.assertTrue(hasattr(脱敏处理结果(),"已生成文件"))
+        from 主程序.脱敏处理器 import 脱敏处理器
         with 验证用临时目录() as 目录:
             原件 = Path(目录)/"原文.txt"
-            原件.write_text("甲供应商向BlueX采购。",encoding="utf-8")
+            原件.write_text("甲供应商向BlueX采购。", encoding="utf-8")
             处理器 = 脱敏处理器(启用日期=False)
-            首次 = 识别结果({"E1":{"canonical":None,"names":["甲供应商"]}},
-                [出现记录("text:0",0,4,"甲供应商","Ni","E1")],{"text:0"})
-            def 复查(输出块,原块,已有机构,进度回调=None):
-                b = 输出块[0]
-                self.assertIn("[机构1]",b.原文)
-                s = b.原文.index("BlueX")
-                return 识别结果({"E2":{"canonical":None,"names":["BlueX"]}},
-                    [出现记录(b.编号,s,s+5,"BlueX","Ni","E2")])
-            with patch.object(处理器._ner,"识别文档",return_value=首次), patch.object(处理器._ner,"复查输出",side_effect=复查):
-                结果 = 处理器.处理文件列表([str(原件)],目录)
-            self.assertEqual(结果.成功数,1,结果.未完成环节)
+            with patch.object(处理器._ner, "_请求文档模型", return_value={"content":"机构\t-\t甲供应商\n机构\t-\tBlueX"}) as 请求:
+                结果 = 处理器.处理文件列表([str(原件)], 目录)
+            self.assertEqual(结果.成功数, 1, 结果.未完成环节)
+            self.assertEqual(请求.call_count, 1)
             内容 = Path(结果.已生成文件[0]).read_text(encoding="utf-8-sig")
-            self.assertEqual(内容,"[机构1]向[机构2]采购。")
+            self.assertEqual(内容, "[机构1]向[机构2]采购。")
+            映射 = 全局映射表()
+            映射.从文件加载(结果.映射表路径列表[0])
+            self.assertEqual(映射.批量还原文本(内容), "甲供应商向BlueX采购。")
 
 
 class 验证入口测试(unittest.TestCase):

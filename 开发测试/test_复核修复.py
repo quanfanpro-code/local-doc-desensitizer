@@ -63,10 +63,6 @@ class Test生成脱敏md传入文本(unittest.TestCase):
 class Test调试日志开关(unittest.TestCase):
     """调试日志默认关闭；开启后即使处理抛异常也必须关闭文件句柄"""
 
-    def setUp(self):
-        复查 = patch.object(NER引擎, '复查输出', return_value=识别结果())
-        复查.start()
-        self.addCleanup(复查.stop)
 
     def _造txt(self, 目录: str) -> str:
         p = Path(目录) / "a.txt"

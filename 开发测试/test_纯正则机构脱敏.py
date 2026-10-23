@@ -90,8 +90,7 @@ class Test处理器纯正则模式(unittest.TestCase):
             "特变电工新疆新能源股份有限公司（以下简称“特变电工”）中标，电话13800138000。\n",
             encoding="utf-8")
         处理器 = 脱敏处理器(跳过模型=True)
-        with patch.object(处理器._ner, "识别文档", side_effect=AssertionError("不应调用模型识别")) as 识别桩, \
-             patch.object(处理器._ner, "复查输出", side_effect=AssertionError("不应调用输出复查")):
+        with patch.object(处理器._ner, "识别文档", side_effect=AssertionError("不应调用模型识别")) as 识别桩:
             结果 = 处理器.处理文件列表([str(源文件)], 临时目录)
         输出 = (Path(临时目录) / "样例_脱敏.txt").read_text(encoding="utf-8-sig")
         self.assertEqual(识别桩.call_count, 0)

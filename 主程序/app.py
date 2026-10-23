@@ -382,7 +382,7 @@ class 脱敏工具GUI(ctk.CTk if ctk else object):
         self.checkbox_amount.grid(row=3, column=0, columnspan=2, padx=(0, 0), pady=(0, 0), sticky="w")
         # 默认不勾选金额脱敏
 
-        ctk.CTkLabel(options_frame, text="机构简称自动核对",
+        ctk.CTkLabel(options_frame, text="名称单轮识别与简称关联",
             font=ctk.CTkFont(size=12)).grid(row=4,column=0,columnspan=2,pady=(6,0),sticky="w")
 
         right_frame = ctk.CTkFrame(self.ctrl_card, fg_color="transparent")
