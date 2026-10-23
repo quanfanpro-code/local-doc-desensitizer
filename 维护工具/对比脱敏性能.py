@@ -12,6 +12,7 @@ p.add_argument('--source', required=True)
 p.add_argument('--output', required=True)
 p.add_argument('--stress', type=int, default=0, help='默认只测三份小样例；大压力样例须明确指定重复次数')
 p.add_argument('--reasoning', choices=['configured','disabled','low','high'], default='configured', help='仅评测时覆盖 DeepSeek 思考参数，不修改设置文件')
+p.add_argument('--codex', action='store_true', help='用本机 Codex 订阅 gpt-6-luna/medium 替换模型请求边界，不改识别与解析')
 args = p.parse_args()
 sys.dont_write_bytecode = True
 sys.path.insert(0, args.source)
@@ -63,7 +64,20 @@ def measured_post(*a, **kw):
         records.append(item)
         print(f'请求 {len(records)} 完成：{item["耗时秒"]} 秒', flush=True)
 requests.post = measured_post
-report = {'源目录': args.source, '评测思考覆盖': args.reasoning, '标注哈希': hashlib.sha256(data_path.read_bytes()).hexdigest(), '文档': []}
+if args.codex:
+    from 维护工具.验证订阅模型 import 调用
+    import 主程序.文档识别 as 文档识别
+    def 订阅请求(引擎, 消息, 最大输出=8192):
+        开始 = time.perf_counter()
+        返回 = 调用(消息, 最大输出)
+        item = {'模型': 'gpt-6-luna', '思考强度': 'medium', '最大输出': 最大输出,
+                '回答': 返回.get('content', ''), '结束原因': 返回.get('_finish_reason'),
+                'usage': 返回.get('_订阅回执'), '耗时秒': round(time.perf_counter() - 开始, 4)}
+        records.append(item)
+        print(f'请求 {len(records)} 完成：{item["耗时秒"]} 秒', flush=True)
+        return 返回
+    文档识别.请求模型 = 订阅请求
+report = {'源目录': args.source, '评测思考覆盖': args.reasoning, '调用方式': 'codex订阅' if args.codex else 'requests', '标注哈希': hashlib.sha256(data_path.read_bytes()).hexdigest(), '文档': []}
 for doc in data:
     records.clear()
     name = doc['名称']

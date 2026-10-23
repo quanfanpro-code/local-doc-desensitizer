@@ -294,7 +294,7 @@ class 完整入口测试(unittest.TestCase):
             原件 = Path(目录)/"原文.txt"
             原件.write_text("甲供应商向BlueX采购。", encoding="utf-8")
             处理器 = 脱敏处理器(启用日期=False)
-            with patch.object(处理器._ner, "_请求文档模型", return_value={"content":"机构\t-\t甲供应商\n机构\t-\tBlueX"}) as 请求:
+            with patch.object(处理器._ner, "_请求文档模型", return_value={"content":"机构\ttext:0\t-\t甲供应商\n机构\ttext:0\t-\tBlueX"}) as 请求:
                 结果 = 处理器.处理文件列表([str(原件)], 目录)
             self.assertEqual(结果.成功数, 1, 结果.未完成环节)
             self.assertEqual(请求.call_count, 1)
