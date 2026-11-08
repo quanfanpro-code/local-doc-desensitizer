@@ -193,6 +193,11 @@ def 保存(原路径, 块列表, 结果, 映射, 输出路径):
                 cell.value = 输出值
                 if not (b.数据类型 == "f" and isinstance(输出值,str) and 输出值.startswith("=")):
                     cell.data_type = "s"
+            if wb.calculation is None:
+                # 部分 xlsx 没有 calcPr 节点，openpyxl 读取器会把 calculation 置为 None，
+                # 直接取属性会报 'NoneType' object has no attribute；补一个默认计算属性再置标志。
+                from openpyxl.workbook.properties import CalcProperties
+                wb.calculation = CalcProperties()
             wb.calculation.fullCalcOnLoad = True
             wb.calculation.forceFullCalc = True
             wb.save(输出路径)
